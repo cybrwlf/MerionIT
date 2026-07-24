@@ -1,5 +1,10 @@
 @echo off
+setlocal
+if not exist "C:\MerionIT\logs" mkdir "C:\MerionIT\logs"
+for /f %%T in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HHmmss"') do set "TS=%%T"
+set "LOGFILE=C:\MerionIT\logs\3rd_Step_WIN10-%TS%.log"
 
+(
 echo Detected
 powershell.exe -Command "(Get-ComputerInfo).OsName" | findstr /i "Windows"
 
@@ -21,3 +26,4 @@ powershell.exe -ExecutionPolicy UnRestricted -File tweaks\WIN10-Unpin-Taskbar-It
 Start cmd.exe /c call powerconfig.cmd
 
 ping 127.0.0.1 -n 5 > nul
+) 2>&1 | powershell -NoProfile -Command "$input | Tee-Object -FilePath '%LOGFILE%'"
