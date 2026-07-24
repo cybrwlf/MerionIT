@@ -1,0 +1,6 @@
+secrets.psd1
+os_version.txt
+*.log
+*.csv
+.repo-manifest.txt
+.setup-complete

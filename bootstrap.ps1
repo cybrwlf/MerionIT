@@ -1,0 +1,69 @@
+<#
+Entry point. Usage from an admin PowerShell prompt on a fresh Win10/11 machine:
+
+  powershell.exe -ExecutionPolicy Unrestricted -Command "irm https://raw.githubusercontent.com/cybrwlf/MerionIT/main/bootstrap.ps1 | iex"
+
+Syncs the repo into C:\MerionIT and launches 1st_Step.ps1. This is safe to re-run on an
+already-set-up machine (e.g. to pick up a newer version of the scripts) - it only ever touches
+files that are actually part of this repo. It tracks exactly which files it placed on disk
+(.repo-manifest.txt) and removes only those that no longer exist in the newer version being
+synced - it never touches InstallLog.csv, the backup\ folder that backup-userfiles.ps1 writes
+real user data into, or anything else not tracked by the repo.
+#>
+
+$RepoZipUrl = "https://github.com/cybrwlf/MerionIT/archive/refs/heads/main.zip"
+$Dest = "C:\MerionIT"
+$ZipPath = "$env:TEMP\MerionIT.zip"
+$ExtractPath = "$env:TEMP\MerionIT-extract"
+$ManifestPath = Join-Path $Dest ".repo-manifest.txt"
+
+Write-Host "Downloading MerionIT from GitHub..."
+Invoke-WebRequest -Uri $RepoZipUrl -OutFile $ZipPath
+
+if (Test-Path $ExtractPath) { Remove-Item $ExtractPath -Recurse -Force }
+Expand-Archive -Path $ZipPath -DestinationPath $ExtractPath -Force
+$extractedFolder = Get-ChildItem -Path $ExtractPath -Directory | Select-Object -First 1
+
+if (-not (Test-Path $Dest)) {
+    New-Item -ItemType Directory -Path $Dest | Out-Null
+}
+
+$oldManifest = if (Test-Path $ManifestPath) { @(Get-Content $ManifestPath) } else { @() }
+$newFiles = @(Get-ChildItem -Path $extractedFolder.FullName -Recurse -File | ForEach-Object {
+    $_.FullName.Substring($extractedFolder.FullName.Length + 1)
+})
+
+# Remove files that this repo used to ship but no longer does (renamed/deleted scripts from an
+# older pull) - only ever files that were in a previous manifest, never anything else on disk.
+$toRemove = $oldManifest | Where-Object { $newFiles -notcontains $_ }
+foreach ($rel in $toRemove) {
+    $target = Join-Path $Dest $rel
+    if (Test-Path $target) {
+        Remove-Item $target -Force
+        Write-Host "Removed stale file from a previous version: $rel"
+    }
+}
+
+# Copy the current version's files in
+foreach ($rel in $newFiles) {
+    $src = Join-Path $extractedFolder.FullName $rel
+    $dstFile = Join-Path $Dest $rel
+    $dstDir = Split-Path $dstFile -Parent
+    if (-not (Test-Path $dstDir)) { New-Item -ItemType Directory -Path $dstDir -Force | Out-Null }
+    Copy-Item -Path $src -Destination $dstFile -Force
+}
+
+# Clean up any now-empty directories left behind by removed files
+Get-ChildItem -Path $Dest -Recurse -Directory -ErrorAction SilentlyContinue |
+    Sort-Object -Property FullName -Descending |
+    Where-Object { (Get-ChildItem -Path $_.FullName -Force | Measure-Object).Count -eq 0 } |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+
+$newFiles | Set-Content -Path $ManifestPath
+
+Remove-Item $ZipPath -Force
+Remove-Item $ExtractPath -Recurse -Force
+
+Write-Host "MerionIT synced to $Dest."
+Write-Host "Launching setup..."
+& "$Dest\1st_Step.ps1"

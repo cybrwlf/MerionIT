@@ -1,0 +1,4 @@
+Out-of-box experience (OOBE) disable internet requirement
+Use the "Shift + F10" keyboard shortcut to open Command Prompt on the Windows 11 setup.
+Type the following command to disable the internet connection requirement to set up Windows 11 and press Enter: oobe\bypassnro
+The command doesn't have any spaces. Also, the computer will restart at this moment.
