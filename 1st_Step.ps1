@@ -20,11 +20,20 @@ Writes .setup-complete once a full run finishes. If this script runs again later
 was re-synced for an unrelated reason and happened to restore the blueprint files above), the
 cleanup re-fires immediately - before anything else, regardless of whether you choose to continue
 with a full pipeline re-run - so a restored blueprint file never survives past that point.
+
+Full console output (including everything RenamePC.ps1/DefaultAccounts.ps1/Agent-Install.ps1/
+Install-Apps.ps1 print, since they run in-process from here) is transcribed to
+C:\MerionIT\logs\1st_Step-<timestamp>.log. A rename reboot cuts the transcript short - RunOnce
+starts a fresh one when this script relaunches after restart.
 #>
 
 $MerionITRoot = "C:\MerionIT"
 Set-Location $MerionITRoot
 $CompletionMarker = Join-Path $MerionITRoot ".setup-complete"
+
+$LogDir = Join-Path $MerionITRoot "logs"
+New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+Start-Transcript -Path (Join-Path $LogDir "1st_Step-$(Get-Date -Format 'yyyy-MM-dd_HHmmss').log") | Out-Null
 
 function Remove-SetupBlueprintFiles {
     param([string]$Root)
@@ -136,3 +145,5 @@ if ($osName -like "*Windows 11*") {
 } else {
     Write-Warning "Unrecognized OS ('$osName') - launch 2nd_Step_WIN11.bat or 3rd_Step_WIN10.bat manually."
 }
+
+Stop-Transcript | Out-Null

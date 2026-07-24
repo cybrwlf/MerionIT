@@ -7,12 +7,14 @@ New-machine / new-user setup scripts for Merion Residential. Public repo — con
 On a fresh Windows 10/11 machine, from an admin PowerShell prompt:
 
 ```powershell
-powershell.exe -ExecutionPolicy Unrestricted -Command "irm https://raw.githubusercontent.com/cybrwlf/MerionIT/main/bootstrap.ps1 | iex"
+powershell.exe -ExecutionPolicy Unrestricted -Command "irm https://raw.githubusercontent.com/cybrwlf/MerionIT/master/bootstrap.ps1 | iex"
 ```
 
 This syncs the repo to `C:\MerionIT` and launches `1st_Step.ps1`.
 
 Safe to re-run later (e.g. to pick up a newer version of the scripts) - `bootstrap.ps1` tracks exactly which files it placed on disk and only ever touches those, never log files or the real user data `backup-userfiles.ps1` writes into `backup\`. If `1st_Step.ps1` finds this machine already went through a full setup, it asks for confirmation before reapplying anything (re-running the Win10/11 tweak scripts would otherwise silently reset Start Menu/taskbar customizations someone's made since).
+
+`bootstrap.ps1`, `1st_Step.ps1`, and `Fix-OfficeLanguages.ps1` each write a full transcript of their console output to `C:\MerionIT\logs\` - if something goes wrong, send that file instead of a screenshot. Note: the 2nd/3rd Step tweak scripts run in their own separate window and aren't captured in these transcripts.
 
 ## What runs automatically vs. manually
 

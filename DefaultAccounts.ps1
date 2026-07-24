@@ -46,9 +46,10 @@ function CreateOrUpdateAccount {
                 Write-Host "$username is already a member of the Administrators local group. Skipping."
             }
         }
-        Set-LocalUser -Name $username -PasswordNeverExpires $true
         Write-Host "Created $username account."
     }
+
+    Set-LocalUser -Name $username -PasswordNeverExpires $true
 
     $isUsersMember = Get-LocalGroupMember -Group "Users" | Where-Object { $_.Name -like "*\$username" }
     if (-not $isUsersMember) {

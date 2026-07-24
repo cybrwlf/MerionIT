@@ -119,12 +119,31 @@ function Install-Scoop {
     return $out
 }
 
-function Install-ViaScoop {
-    param($App)
+function Test-GitAvailable {
+    return [bool](Get-Command git -ErrorAction SilentlyContinue)
+}
+
+function Ensure-ScoopReady {
+    <#
+    Scoop needs Git for anything beyond the built-in "main" bucket, and (in current Scoop
+    versions) even to update an already-installed app, since update checks for a newer Scoop
+    release via Git first. Install-Scoop always installs Git right after bootstrapping Scoop
+    itself - but if Scoop was already present on the machine from an earlier/manual setup, that
+    bootstrap never runs, so Git can still be missing. Check for it independently every time.
+    #>
     $output = ""
     if (-not (Test-ScoopInstalled)) {
         $output += Install-Scoop
+    } elseif (-not (Test-GitAvailable)) {
+        Write-Host "Scoop is installed but Git is missing - installing it..."
+        $output += "`n--- installing git ---`n" + (& scoop install git 2>&1 | Out-String)
     }
+    return $output
+}
+
+function Install-ViaScoop {
+    param($App)
+    $output = Ensure-ScoopReady
     if ($App.ScoopId -like "*/*") {
         $bucket = $App.ScoopId.Split('/')[0]
         $output += "`n--- adding bucket $bucket ---`n" + (& scoop bucket add $bucket 2>&1 | Out-String)
@@ -135,12 +154,14 @@ function Install-ViaScoop {
 
 function Update-ViaScoop {
     param($App)
-    return (& scoop update $App.ScoopId --global 2>&1 | Out-String)
+    $output = Ensure-ScoopReady
+    $output += (& scoop update $App.ScoopId --global 2>&1 | Out-String)
+    return $output
 }
 
 function Test-WingetAppInstalled {
     param($WingetId)
-    $out = & winget list --id $WingetId --accept-source-agreements 2>&1 | Out-String
+    $out = & winget list --id $WingetId --source winget --accept-source-agreements 2>&1 | Out-String
     return ($LASTEXITCODE -eq 0) -and ($out -match [regex]::Escape($WingetId))
 }
 
@@ -216,7 +237,7 @@ $results = foreach ($app in $Apps) {
         }
     } elseif (Test-WingetAppInstalled -WingetId $app.WingetId) {
         Write-Host "$($app.Name) already installed (winget) - checking for updates..."
-        $details = & winget upgrade --id $app.WingetId --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-String
+        $details = & winget upgrade --id $app.WingetId --source winget --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-String
         # A non-zero exit here usually just means "no update available" - the app being present
         # at all is success for our purposes.
         $success = $true
@@ -230,7 +251,7 @@ $results = foreach ($app in $Apps) {
         $uninstallCmd = "scoop uninstall $($app.ScoopId) --global"
     } else {
         Write-Host "Installing $($app.Name) via winget..."
-        $details = & winget install --id $app.WingetId --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-String
+        $details = & winget install --id $app.WingetId --source winget --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-String
         if ($LASTEXITCODE -eq 0) {
             $success = $true
             $method = "winget"

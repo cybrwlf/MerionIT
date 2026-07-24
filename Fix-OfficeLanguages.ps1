@@ -10,6 +10,8 @@ actually works before relying on it as the default. See brainstorms/2026-07-23-m
 
 Sources consulted: learn.microsoft.com/en-us/microsoft-365-apps/deploy/office-deployment-tool-configuration-options,
 office365itpros.com/2018/10/15/office-clicktorun-registry, thewindowsclub.com (SaRAcmd.exe switches).
+
+Full console output is transcribed to C:\MerionIT\logs\Fix-OfficeLanguages-<timestamp>.log.
 #>
 param(
     [string[]]$KeepLanguage = @("en-us"),
@@ -18,6 +20,10 @@ param(
 
 $OdtDir = "C:\MerionIT\ODT"
 New-Item -ItemType Directory -Path $OdtDir -Force | Out-Null
+
+$LogDir = "C:\MerionIT\logs"
+New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+Start-Transcript -Path (Join-Path $LogDir "Fix-OfficeLanguages-$(Get-Date -Format 'yyyy-MM-dd_HHmmss').log") | Out-Null
 
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
     Write-Error "winget is required to fetch the Office Deployment Tool. Aborting."
@@ -86,3 +92,5 @@ if ($remaining) {
 } else {
     Write-Host "Extra language packs removed successfully - only $($KeepLanguage -join ', ') remain."
 }
+
+Stop-Transcript | Out-Null

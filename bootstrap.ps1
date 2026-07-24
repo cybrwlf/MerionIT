@@ -1,7 +1,7 @@
 <#
 Entry point. Usage from an admin PowerShell prompt on a fresh Win10/11 machine:
 
-  powershell.exe -ExecutionPolicy Unrestricted -Command "irm https://raw.githubusercontent.com/cybrwlf/MerionIT/main/bootstrap.ps1 | iex"
+  powershell.exe -ExecutionPolicy Unrestricted -Command "irm https://raw.githubusercontent.com/cybrwlf/MerionIT/master/bootstrap.ps1 | iex"
 
 Syncs the repo into C:\MerionIT and launches 1st_Step.ps1. This is safe to re-run on an
 already-set-up machine (e.g. to pick up a newer version of the scripts) - it only ever touches
@@ -9,23 +9,35 @@ files that are actually part of this repo. It tracks exactly which files it plac
 (.repo-manifest.txt) and removes only those that no longer exist in the newer version being
 synced - it never touches InstallLog.csv, the backup\ folder that backup-userfiles.ps1 writes
 real user data into, or anything else not tracked by the repo.
+
+Full console output is transcribed to C:\MerionIT\logs\bootstrap-<timestamp>.log.
 #>
 
-$RepoZipUrl = "https://github.com/cybrwlf/MerionIT/archive/refs/heads/main.zip"
+$RepoZipUrl = "https://github.com/cybrwlf/MerionIT/archive/refs/heads/master.zip"
 $Dest = "C:\MerionIT"
 $ZipPath = "$env:TEMP\MerionIT.zip"
 $ExtractPath = "$env:TEMP\MerionIT-extract"
 $ManifestPath = Join-Path $Dest ".repo-manifest.txt"
 
+if (-not (Test-Path $Dest)) {
+    New-Item -ItemType Directory -Path $Dest | Out-Null
+}
+$LogDir = Join-Path $Dest "logs"
+New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+Start-Transcript -Path (Join-Path $LogDir "bootstrap-$(Get-Date -Format 'yyyy-MM-dd_HHmmss').log") | Out-Null
+
 Write-Host "Downloading MerionIT from GitHub..."
-Invoke-WebRequest -Uri $RepoZipUrl -OutFile $ZipPath
+try {
+    Invoke-WebRequest -Uri $RepoZipUrl -OutFile $ZipPath -ErrorAction Stop
+} catch {
+    throw "Download failed ($($_.Exception.Message)) - check that $RepoZipUrl is reachable and points at a real branch."
+}
 
 if (Test-Path $ExtractPath) { Remove-Item $ExtractPath -Recurse -Force }
 Expand-Archive -Path $ZipPath -DestinationPath $ExtractPath -Force
 $extractedFolder = Get-ChildItem -Path $ExtractPath -Directory | Select-Object -First 1
-
-if (-not (Test-Path $Dest)) {
-    New-Item -ItemType Directory -Path $Dest | Out-Null
+if (-not $extractedFolder) {
+    throw "Extraction produced no folder - the downloaded zip may be empty or invalid. Aborting before touching $Dest."
 }
 
 $oldManifest = if (Test-Path $ManifestPath) { @(Get-Content $ManifestPath) } else { @() }
@@ -66,4 +78,5 @@ Remove-Item $ExtractPath -Recurse -Force
 
 Write-Host "MerionIT synced to $Dest."
 Write-Host "Launching setup..."
+Stop-Transcript | Out-Null
 & "$Dest\1st_Step.ps1"
