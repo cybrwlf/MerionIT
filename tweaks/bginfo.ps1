@@ -18,7 +18,7 @@ if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
 $BgInfoDir = "C:\BGinfo"
 New-Item -ItemType Directory -Path $BgInfoDir -Force | Out-Null
 
-winget install --id Microsoft.Sysinternals.BGInfo --silent --accept-package-agreements --accept-source-agreements --location $BgInfoDir
+winget install --id Microsoft.Sysinternals.BGInfo --source winget --silent --accept-package-agreements --accept-source-agreements --location $BgInfoDir
 
 $bgInfoExe = Get-ChildItem -Path $BgInfoDir -Filter "Bginfo*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $bgInfoExe) {

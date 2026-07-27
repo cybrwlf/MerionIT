@@ -5,8 +5,11 @@ a targeted removal (Office Deployment Tool "Remove" config, keeping only the req
 first. If that doesn't fully clear the extra languages, it falls back to a full Office removal via
 Microsoft's SaRA tool and a clean English-only reinstall via winget.
 
-NOTE: this has not yet been tested against a real Dell OEM image - verify the targeted-removal path
-actually works before relying on it as the default. See brainstorms/2026-07-23-merionit-onboarding-github-repo.md, Q14.
+Tested against a real Dell OEM image 2026-07-27: the initial detection (ClientCulture-based) missed
+real installed language packs entirely, which is why detection was rewritten to scan the Uninstall
+registry instead (see comment above). The ODT targeted-removal path itself has not yet been
+confirmed to actually clear the packs - only that detection now correctly finds them. See
+brainstorms/2026-07-23-merionit-onboarding-github-repo.md, Q14.
 
 Sources consulted: learn.microsoft.com/en-us/microsoft-365-apps/deploy/office-deployment-tool-configuration-options,
 office365itpros.com/2018/10/15/office-clicktorun-registry, thewindowsclub.com (SaRAcmd.exe switches).
@@ -37,7 +40,21 @@ if (-not $config) {
     return
 }
 
-$installedLangs = @($config.ClientCulture -split ',' | Where-Object { $_ })
+# ClientCulture (the ClickToRun UI-culture value) only reflects the active display language, not
+# every language pack actually installed alongside it - confirmed in the field 2026-07-27: a Dell
+# OEM image showed es-es/fr-fr/pt-br packs in Programs and Features while ClientCulture reported
+# only en-us. Each extra language pack shows up as its own "Microsoft 365 - xx-xx" entry in the
+# Uninstall registry, so that's the reliable signal for what's actually installed.
+$uninstallKeys = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+)
+$installedLangs = @(
+    Get-ItemProperty -Path $uninstallKeys -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -match '^Microsoft 365 - ([a-z]{2}-[a-z]{2})$' } |
+        ForEach-Object { $matches[1] } |
+        Select-Object -Unique
+)
 $langsToRemove = @($installedLangs | Where-Object { $KeepLanguage -notcontains $_ })
 
 if (-not $langsToRemove) {
@@ -46,7 +63,7 @@ if (-not $langsToRemove) {
 }
 
 Write-Host "Installing Office Deployment Tool via winget..."
-winget install --id Microsoft.OfficeDeploymentTool --silent --accept-package-agreements --accept-source-agreements --location $OdtDir
+winget install --id Microsoft.OfficeDeploymentTool --source winget --silent --accept-package-agreements --accept-source-agreements --location $OdtDir
 
 $setupExe = Get-ChildItem -Path $OdtDir -Filter "setup.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $setupExe) {
@@ -71,7 +88,12 @@ Write-Host "Attempting targeted removal of: $($langsToRemove -join ', ')"
 & $setupExe.FullName /configure $removeConfigPath
 Start-Sleep -Seconds 5
 
-$stillInstalled = @((Get-ItemProperty -Path $c2rKey -ErrorAction SilentlyContinue).ClientCulture -split ',' | Where-Object { $_ })
+$stillInstalled = @(
+    Get-ItemProperty -Path $uninstallKeys -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -match '^Microsoft 365 - ([a-z]{2}-[a-z]{2})$' } |
+        ForEach-Object { $matches[1] } |
+        Select-Object -Unique
+)
 $remaining = @($stillInstalled | Where-Object { $KeepLanguage -notcontains $_ })
 
 if ($remaining) {
@@ -85,7 +107,7 @@ if ($remaining) {
     if ($saraCmd) {
         & $saraCmd.FullName -S OfficeScrubScenario -AcceptEula -OfficeVersion All
         Write-Host "Reinstalling Office, English only..."
-        winget install --id Microsoft.Office --silent --accept-package-agreements --accept-source-agreements --locale en-us
+        winget install --id Microsoft.Office --source winget --silent --accept-package-agreements --accept-source-agreements --locale en-us
     } else {
         Write-Error "Could not find SaRAcmd.exe - do the full removal manually via https://aka.ms/SaRA_OfficeUninstall, then reinstall Office (English only)."
     }
