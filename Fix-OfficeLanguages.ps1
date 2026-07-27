@@ -6,13 +6,16 @@ first. If that doesn't fully clear the extra languages, it falls back to a full 
 Microsoft's SaRA tool and a clean English-only reinstall via winget.
 
 Tested against a real Dell OEM image 2026-07-27: the initial detection (ClientCulture-based) missed
-real installed language packs entirely, which is why detection was rewritten to scan the Uninstall
-registry instead (see comment above). The ODT targeted-removal path itself has not yet been
-confirmed to actually clear the packs - only that detection now correctly finds them. See
-brainstorms/2026-07-23-merionit-onboarding-github-repo.md, Q14.
+real installed language packs entirely, fixed by scanning the Uninstall registry instead (see
+comment below). Same test also caught two more real bugs: the ODT removal was only given 5 seconds
+before being checked (Click-to-Run applies it in the background - can take a couple minutes, so the
+check ran too early and falsely looked like it failed) and the SaRA fallback tool's real executable
+is GetHelpCmd.exe, not SaRAcmd.exe (Microsoft renamed it). Both fixed. Still unconfirmed: whether the
+ODT targeted-removal actually clears the packs once given enough time - that needs a re-test.
+See brainstorms/2026-07-23-merionit-onboarding-github-repo.md, Q14.
 
 Sources consulted: learn.microsoft.com/en-us/microsoft-365-apps/deploy/office-deployment-tool-configuration-options,
-office365itpros.com/2018/10/15/office-clicktorun-registry, thewindowsclub.com (SaRAcmd.exe switches).
+office365itpros.com/2018/10/15/office-clicktorun-registry.
 
 Full console output is transcribed to C:\MerionIT\logs\Fix-OfficeLanguages-<timestamp>.log.
 #>
@@ -86,15 +89,21 @@ Set-Content -Path $removeConfigPath -Value $removeConfig
 
 Write-Host "Attempting targeted removal of: $($langsToRemove -join ', ')"
 & $setupExe.FullName /configure $removeConfigPath
-Start-Sleep -Seconds 5
 
-$stillInstalled = @(
-    Get-ItemProperty -Path $uninstallKeys -ErrorAction SilentlyContinue |
-        Where-Object { $_.DisplayName -match '^Microsoft 365 - ([a-z]{2}-[a-z]{2})$' } |
-        ForEach-Object { $matches[1] } |
-        Select-Object -Unique
-)
-$remaining = @($stillInstalled | Where-Object { $KeepLanguage -notcontains $_ })
+Write-Host "Waiting for Click-to-Run to apply the change (this runs in the background and can take a couple minutes)..."
+$maxWaitSeconds = 180
+$waited = 0
+do {
+    Start-Sleep -Seconds 15
+    $waited += 15
+    $stillInstalled = @(
+        Get-ItemProperty -Path $uninstallKeys -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -match '^Microsoft 365 - ([a-z]{2}-[a-z]{2})$' } |
+            ForEach-Object { $matches[1] } |
+            Select-Object -Unique
+    )
+    $remaining = @($stillInstalled | Where-Object { $KeepLanguage -notcontains $_ })
+} while ($remaining -and $waited -lt $maxWaitSeconds)
 
 if ($remaining) {
     Write-Warning "Targeted removal did not fully clear extra languages ($($remaining -join ', ')). Falling back to full removal + clean reinstall."
@@ -102,14 +111,18 @@ if ($remaining) {
     $saraZip = Join-Path $OdtDir "SaRACmd.zip"
     Invoke-WebRequest -Uri "https://aka.ms/SaRA_EnterpriseVersionFiles" -OutFile $saraZip
     Expand-Archive -Path $saraZip -DestinationPath (Join-Path $OdtDir "SaRA") -Force
-    $saraCmd = Get-ChildItem -Path (Join-Path $OdtDir "SaRA") -Filter "SaRAcmd.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    # Microsoft renamed this tool's executable from SaRAcmd.exe to GetHelpCmd.exe (same download
+    # URL, same "SaRA" branding, different binary name) - confirmed against the real download
+    # 2026-07-27. Its -OfficeVersion flag is also gone; -S OfficeScrubScenario -AcceptEula is all
+    # it accepts now (confirmed via GetHelpCmd.exe /?).
+    $saraCmd = Get-ChildItem -Path (Join-Path $OdtDir "SaRA") -Filter "GetHelpCmd.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 
     if ($saraCmd) {
-        & $saraCmd.FullName -S OfficeScrubScenario -AcceptEula -OfficeVersion All
+        & $saraCmd.FullName -S OfficeScrubScenario -AcceptEula
         Write-Host "Reinstalling Office, English only..."
         winget install --id Microsoft.Office --source winget --silent --accept-package-agreements --accept-source-agreements --locale en-us
     } else {
-        Write-Error "Could not find SaRAcmd.exe - do the full removal manually via https://aka.ms/SaRA_OfficeUninstall, then reinstall Office (English only)."
+        Write-Error "Could not find GetHelpCmd.exe - do the full removal manually via https://aka.ms/SaRA_OfficeUninstall, then reinstall Office (English only)."
     }
 } else {
     Write-Host "Extra language packs removed successfully - only $($KeepLanguage -join ', ') remain."
