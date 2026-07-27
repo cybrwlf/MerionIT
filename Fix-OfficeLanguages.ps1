@@ -119,6 +119,23 @@ if ($remaining) {
 
     if ($saraCmd) {
         & $saraCmd.FullName -S OfficeScrubScenario -AcceptEula
+
+        # GetHelpCmd itself reports "Uninstall office is running in the background" - it does not
+        # block until the uninstall actually finishes. Confirmed in the field 2026-07-27: without
+        # waiting here, the winget reinstall below ran while Office was still mid-uninstall and
+        # failed with "No applicable installer found," leaving the machine with no Office at all.
+        Write-Host "Waiting for the Office uninstall to actually finish..."
+        $officeMaxWaitSeconds = 300
+        $officeWaited = 0
+        do {
+            Start-Sleep -Seconds 15
+            $officeWaited += 15
+            $officeStillPresent = [bool](
+                Get-ItemProperty -Path $uninstallKeys -ErrorAction SilentlyContinue |
+                    Where-Object { $_.DisplayName -like "Microsoft 365*" -or $_.DisplayName -like "Microsoft Office*" }
+            )
+        } while ($officeStillPresent -and $officeWaited -lt $officeMaxWaitSeconds)
+
         Write-Host "Reinstalling Office, English only..."
         winget install --id Microsoft.Office --source winget --silent --accept-package-agreements --accept-source-agreements --locale en-us
     } else {

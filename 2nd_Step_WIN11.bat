@@ -1,5 +1,6 @@
 @echo off
 setlocal
+cd /d "C:\MerionIT"
 if not exist "C:\MerionIT\logs" mkdir "C:\MerionIT\logs"
 for /f %%T in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HHmmss"') do set "TS=%%T"
 set "LOGFILE=C:\MerionIT\logs\2nd_Step_WIN11-%TS%.log"

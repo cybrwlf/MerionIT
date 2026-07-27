@@ -138,10 +138,10 @@ Get-Date -Format "yyyy-MM-dd HH:mm:ss" | Set-Content -Path $CompletionMarker
 $osName = (Get-ComputerInfo).OsName
 if ($osName -like "*Windows 11*") {
     Write-Host "Detected Windows 11 - launching 2nd_Step..."
-    Start-Process "$MerionITRoot\2nd_Step_WIN11.bat"
+    Start-Process "$MerionITRoot\2nd_Step_WIN11.bat" -WorkingDirectory $MerionITRoot
 } elseif ($osName -like "*Windows 10*") {
     Write-Host "Detected Windows 10 - launching 3rd_Step..."
-    Start-Process "$MerionITRoot\3rd_Step_WIN10.bat"
+    Start-Process "$MerionITRoot\3rd_Step_WIN10.bat" -WorkingDirectory $MerionITRoot
 } else {
     Write-Warning "Unrecognized OS ('$osName') - launch 2nd_Step_WIN11.bat or 3rd_Step_WIN10.bat manually."
 }
