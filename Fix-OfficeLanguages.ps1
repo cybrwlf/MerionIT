@@ -39,7 +39,12 @@ if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
 $c2rKey = "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration"
 $config = Get-ItemProperty -Path $c2rKey -ErrorAction SilentlyContinue
 if (-not $config) {
-    Write-Host "No Click-to-Run Office installation detected - nothing to do."
+    # No Office at all isn't automatically "nothing to do" - a previous run of this same script can
+    # leave a machine in exactly this state (full scrub via GetHelpCmd, reinstall never completed).
+    # The job here is "only en-us Office remains," so if there's none, put it there.
+    Write-Host "No Office installation detected - installing Office (English only)..."
+    winget install --id Microsoft.Office --source winget --silent --accept-package-agreements --accept-source-agreements --locale en-us
+    Stop-Transcript | Out-Null
     return
 }
 
