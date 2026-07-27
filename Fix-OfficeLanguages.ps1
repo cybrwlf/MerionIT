@@ -3,15 +3,31 @@
 Dell OEM images tend to preinstall Office/OneNote with several language packs at once. This tries
 a targeted removal (Office Deployment Tool "Remove" config, keeping only the requested language)
 first. If that doesn't fully clear the extra languages, it falls back to a full Office removal via
-Microsoft's SaRA tool and a clean English-only reinstall via winget.
+Microsoft's SaRA tool and a clean English-only reinstall via ODT. Also handles the case where Office
+isn't installed at all (including a machine this same script previously scrubbed) by installing it
+fresh - the job here is "only en-us Office ends up on this machine," not just "trim languages if
+Office happens to already be there."
 
-Tested against a real Dell OEM image 2026-07-27: the initial detection (ClientCulture-based) missed
-real installed language packs entirely, fixed by scanning the Uninstall registry instead (see
-comment below). Same test also caught two more real bugs: the ODT removal was only given 5 seconds
-before being checked (Click-to-Run applies it in the background - can take a couple minutes, so the
-check ran too early and falsely looked like it failed) and the SaRA fallback tool's real executable
-is GetHelpCmd.exe, not SaRAcmd.exe (Microsoft renamed it). Both fixed. Still unconfirmed: whether the
-ODT targeted-removal actually clears the packs once given enough time - that needs a re-test.
+Tested against a real Dell OEM image 2026-07-27, several rounds of real bugs found and fixed:
+- Detection was ClientCulture-based and missed real installed language packs entirely - fixed by
+  scanning the Uninstall registry instead (see comment below).
+- The ODT removal was only given 5 seconds before being checked - Click-to-Run applies it in the
+  background and can take a couple minutes, so the check ran too early and falsely looked like it
+  failed. Now polls for up to 3 minutes.
+- The SaRA fallback tool's real executable is GetHelpCmd.exe, not SaRAcmd.exe (Microsoft renamed
+  it), and its -OfficeVersion flag is gone.
+- GetHelpCmd's uninstall runs in the background too and was not waited for, so the reinstall that
+  followed ran while Office was still mid-uninstall and failed, leaving the machine with no Office
+  at all. Now polls for up to 5 minutes before reinstalling.
+- The reinstall itself used `winget install --id Microsoft.Office --locale en-us`, but that
+  package's silent-install switch is hardcoded by Microsoft to `/configure
+  https://aka.ms/fhlwingetconfig` - winget's own generic config, completely ignoring our --locale
+  flag (confirmed directly against the winget-pkgs manifest). It returned instantly with no output
+  and installed nothing. Replaced with an ODT "Add" config we control, same tool already used for
+  removal.
+
+Still unconfirmed: whether the ODT targeted-removal path actually clears extra languages once given
+enough time (vs. always falling back to the full scrub) - needs a re-test.
 See brainstorms/2026-07-23-merionit-onboarding-github-repo.md, Q14.
 
 Sources consulted: learn.microsoft.com/en-us/microsoft-365-apps/deploy/office-deployment-tool-configuration-options,
@@ -36,14 +52,49 @@ if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
     return
 }
 
+function Get-OdtSetupExe {
+    param([string]$OdtDir)
+    $exe = Get-ChildItem -Path $OdtDir -Filter "setup.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($exe) { return $exe }
+    Write-Host "Installing Office Deployment Tool via winget..."
+    winget install --id Microsoft.OfficeDeploymentTool --source winget --silent --accept-package-agreements --accept-source-agreements --location $OdtDir
+    return (Get-ChildItem -Path $OdtDir -Filter "setup.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1)
+}
+
+function Install-OfficeEnglishOnly {
+    <#
+    Installs Office via ODT's own "Add" config instead of winget's Microsoft.Office package - that
+    package's silent switch is hardcoded by Microsoft to its own online config and ignores any
+    language flag we pass, confirmed against the real manifest 2026-07-27.
+    #>
+    param([string]$OdtDir, [string]$ProductId, [string]$Language)
+    $setupExe = Get-OdtSetupExe -OdtDir $OdtDir
+    if (-not $setupExe) {
+        Write-Error "Could not find ODT setup.exe after install - install Office manually."
+        return
+    }
+    $addConfig = @"
+<Configuration>
+  <Add OfficeClientEdition="64" Channel="Current">
+    <Product ID="$ProductId">
+      <Language ID="$Language" />
+    </Product>
+  </Add>
+</Configuration>
+"@
+    $addConfigPath = Join-Path $OdtDir "add-office.xml"
+    Set-Content -Path $addConfigPath -Value $addConfig
+    Write-Host "Installing Office ($Language only) via ODT..."
+    & $setupExe.FullName /configure $addConfigPath
+}
+
 $c2rKey = "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration"
 $config = Get-ItemProperty -Path $c2rKey -ErrorAction SilentlyContinue
 if (-not $config) {
     # No Office at all isn't automatically "nothing to do" - a previous run of this same script can
     # leave a machine in exactly this state (full scrub via GetHelpCmd, reinstall never completed).
-    # The job here is "only en-us Office remains," so if there's none, put it there.
-    Write-Host "No Office installation detected - installing Office (English only)..."
-    winget install --id Microsoft.Office --source winget --silent --accept-package-agreements --accept-source-agreements --locale en-us
+    Write-Host "No Office installation detected - installing Office fresh..."
+    Install-OfficeEnglishOnly -OdtDir $OdtDir -ProductId $ProductId -Language $KeepLanguage[0]
     Stop-Transcript | Out-Null
     return
 }
@@ -70,10 +121,7 @@ if (-not $langsToRemove) {
     return
 }
 
-Write-Host "Installing Office Deployment Tool via winget..."
-winget install --id Microsoft.OfficeDeploymentTool --source winget --silent --accept-package-agreements --accept-source-agreements --location $OdtDir
-
-$setupExe = Get-ChildItem -Path $OdtDir -Filter "setup.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+$setupExe = Get-OdtSetupExe -OdtDir $OdtDir
 if (-not $setupExe) {
     Write-Error "Could not find ODT setup.exe after install - aborting targeted removal."
     return
@@ -127,8 +175,8 @@ if ($remaining) {
 
         # GetHelpCmd itself reports "Uninstall office is running in the background" - it does not
         # block until the uninstall actually finishes. Confirmed in the field 2026-07-27: without
-        # waiting here, the winget reinstall below ran while Office was still mid-uninstall and
-        # failed with "No applicable installer found," leaving the machine with no Office at all.
+        # waiting here, the reinstall below ran while Office was still mid-uninstall and failed,
+        # leaving the machine with no Office at all.
         Write-Host "Waiting for the Office uninstall to actually finish..."
         $officeMaxWaitSeconds = 300
         $officeWaited = 0
@@ -141,8 +189,7 @@ if ($remaining) {
             )
         } while ($officeStillPresent -and $officeWaited -lt $officeMaxWaitSeconds)
 
-        Write-Host "Reinstalling Office, English only..."
-        winget install --id Microsoft.Office --source winget --silent --accept-package-agreements --accept-source-agreements --locale en-us
+        Install-OfficeEnglishOnly -OdtDir $OdtDir -ProductId $ProductId -Language $KeepLanguage[0]
     } else {
         Write-Error "Could not find GetHelpCmd.exe - do the full removal manually via https://aka.ms/SaRA_OfficeUninstall, then reinstall Office (English only)."
     }
