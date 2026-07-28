@@ -1,12 +1,15 @@
 #Requires -RunAsAdministrator
 <#
 Consolidated replacement for DefaultMRMaccounts.ps1 / DefaultMRQaccounts.ps1 / DefaultMRPaccounts.ps1.
-Shares one CreateOrUpdateAccount function (the more modern MRQ/MRP version - existing-admin-membership
-check + adds the account to the Users group for login-screen visibility). Per-company behavior is
-preserved exactly:
-  - MRM: pcsadmin + TempUser (shared property account). Scanner-account creation is legacy/disabled
-    for new setups (all properties use Scan-to-Email now) - left commented out, do not remove.
-  - MRQ: pcsadmin + one named user account (prompted).
+Shares one CreateOrUpdateAccount function (adds the account to the Users group for login-screen
+visibility, and ensures Administrators membership whenever addToAdministrators is true - whether
+the account is being created fresh or already existed). Per-company behavior:
+  - MRM: pcsadmin + TempUser (shared property account, not an admin). Scanner-account creation is
+    legacy/disabled for new setups (all properties use Scan-to-Email now) - left commented out, do
+    not remove.
+  - MRQ: pcsadmin + one named user account (prompted), local admin. Changed 2026-07-28 - the
+    original DefaultMRQaccounts.ps1 did NOT make this account an admin, but Merion IT now wants
+    MRQ named hires to have admin rights on their own machine.
   - MRP: pcsadmin only today - named-user creation intentionally left disabled, matching the original
     DefaultMRPaccounts.ps1 (uncomment when MRP starts needing individual named accounts).
 #>
@@ -37,16 +40,17 @@ function CreateOrUpdateAccount {
         Write-Host "Updated password for $username."
     } else {
         New-LocalUser -Name $username -Password (ConvertTo-SecureString $password -AsPlainText -Force) -Description $description
-        if ($addToAdministrators) {
-            $isMember = Get-LocalGroupMember -Group "Administrators" | Where-Object { $_.Name -like "*\$username" }
-            if (-not $isMember) {
-                Add-LocalGroupMember -Group "Administrators" -Member $username
-                Write-Host "Added $username to the Administrators local group."
-            } else {
-                Write-Host "$username is already a member of the Administrators local group. Skipping."
-            }
-        }
         Write-Host "Created $username account."
+    }
+
+    if ($addToAdministrators) {
+        $isAdmin = Get-LocalGroupMember -Group "Administrators" | Where-Object { $_.Name -like "*\$username" }
+        if (-not $isAdmin) {
+            Add-LocalGroupMember -Group "Administrators" -Member $username
+            Write-Host "Added $username to the Administrators local group."
+        } else {
+            Write-Host "$username is already a member of the Administrators local group. Skipping."
+        }
     }
 
     Set-LocalUser -Name $username -PasswordNeverExpires $true
@@ -73,7 +77,7 @@ switch ($Company) {
     }
     'MRQ' {
         $Uname = Read-Host "Enter Username (i.e. jdoe)"
-        CreateOrUpdateAccount -username $Uname -password $secrets.SingleUserTempPassword -description "MRQ User Account" -addToAdministrators $false
+        CreateOrUpdateAccount -username $Uname -password $secrets.SingleUserTempPassword -description "MRQ User Account" -addToAdministrators $true
     }
     'MRP' {
         # Named-user creation intentionally disabled for MRP today (pcsadmin only), matching the
