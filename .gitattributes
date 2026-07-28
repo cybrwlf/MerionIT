@@ -1,0 +1,9 @@
+# Every script here runs on Windows via cmd.exe/PowerShell. LF-only line endings in a .bat file
+# caused a real, silent failure on one machine (cmd.exe parsing a multi-line parenthesized block)
+# while tolerating it fine on another - confirmed 2026-07-28. Force CRLF for everything so this
+# can't quietly reappear regardless of what tool or OS touches a file next.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.psd1 text eol=crlf
+*.reg text eol=crlf
