@@ -1,11 +1,6 @@
 @echo off
-setlocal
 cd /d "C:\MerionIT"
-if not exist "C:\MerionIT\logs" mkdir "C:\MerionIT\logs"
-for /f %%T in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HHmmss"') do set "TS=%%T"
-set "LOGFILE=C:\MerionIT\logs\2nd_Step_WIN11-%TS%.log"
 
-(
 echo Detected
 powershell.exe -Command "(Get-ComputerInfo).OsName" | findstr /i "Windows"
 echo -----
@@ -27,4 +22,3 @@ powershell.exe -ExecutionPolicy UnRestricted -File tweaks\Clean_win_updates_cach
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\WIN11-Unpin-Taskbar-Items.ps1
 Start cmd.exe /c call powerconfig.cmd
 ping 127.0.0.1 -n 5 > nul
-) 2>&1 | powershell -NoProfile -Command "$input | Tee-Object -FilePath '%LOGFILE%'"
