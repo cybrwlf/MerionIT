@@ -122,6 +122,11 @@ if ($company) {
 # anything already present (even if installed manually) and updates it instead of reinstalling.
 & "$MerionITRoot\Install-Apps.ps1"
 
+# Office always runs too - Fix-OfficeLanguages.ps1 already detects its own three cases (no Office
+# -> install fresh, extra language packs -> clean up, already correct -> no-op), so it's safe to
+# call unconditionally every time rather than relying on a tech to remember it's needed.
+& "$MerionITRoot\Fix-OfficeLanguages.ps1"
+
 if (Test-Path "$MerionITRoot\secrets.psd1") {
     $confirmDelete = Read-Host "Account setup complete. Delete secrets.psd1 now? [Y/N]"
     if ($confirmDelete -ieq 'Y') {

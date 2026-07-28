@@ -18,12 +18,11 @@ Every stage - `bootstrap.ps1`, `1st_Step.ps1`, `2nd_Step_WIN11.bat`/`3rd_Step_WI
 
 ## What runs automatically vs. manually
 
-`1st_Step.ps1` runs the account setup, an RMM agent check (skips itself if the agent's already installed), and the full app install/update - every machine should have the same apps, so that one always fires. Nothing else needs picking from a menu.
+`1st_Step.ps1` runs the account setup, an RMM agent check (skips itself if the agent's already installed), the full app install/update, and Office setup/language cleanup - every machine should have the same apps and a clean English-only Office, so those always fire. Nothing else needs picking from a menu.
 
 **Manual-only, never automatic:**
 - `backup-userfiles.ps1` — only run this by hand when offboarding someone (`powershell.exe -ExecutionPolicy Unrestricted -File C:\MerionIT\backup-userfiles.ps1`).
 - `SingleUser.ps1 <username>` — add one named account to an already-set-up machine (new hire at an existing desk) without re-running the full pipeline. Prompts for its own password at runtime, so it's fine to leave on disk indefinitely.
-- `Fix-OfficeLanguages.ps1` — run when a Dell OEM image shows up with extra Office/OneNote language packs.
 
 ## Automatic cleanup
 
@@ -38,7 +37,7 @@ Once a full setup run finishes, `1st_Step.ps1` deletes the setup-only files that
 - `SingleUser.ps1` — new-employee named local account (manual, persists indefinitely).
 - `MITUser.ps1` — annual MIT-event loaner account (separate, one-off use). Scrubbed after setup completes.
 - `Install-Apps.ps1` — winget-first/Scoop-fallback app installer/updater, logs to `C:\MerionIT\InstallLog.csv`.
-- `Fix-OfficeLanguages.ps1` — strips extra Dell OEM Office language packs (manual).
+- `Fix-OfficeLanguages.ps1` — installs Office fresh if missing, strips extra Dell OEM Office language packs if present, no-ops if already correct. Runs automatically every time.
 - `Agent-Install.ps1` — checks for the RMM agent, opens the installer page only if it's missing.
 - `backup-userfiles.ps1` — offboarding backup (manual).
 - `tweaks/` — Win10/11 UI and debloat tweaks.
