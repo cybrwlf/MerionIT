@@ -76,7 +76,11 @@ Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentD
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338389Enabled" -Type DWord -Value 0 -ErrorAction SilentlyContinue
 
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds" -Name "EnableFeeds" -Type DWord -Value 0 -ErrorAction SilentlyContinue
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "EnableDynamicContentInWSB" -Type DWord -Value 0 -ErrorAction SilentlyContinue
+
+# Search Highlights (the animated icon in the search box) is handled by
+# tweaks\win11-search-highlights-off.ps1, which actually creates the key first - this line never
+# worked (HKLM:\...\Windows Search doesn't exist by default, so Set-ItemProperty silently no-ops
+# without a New-Item guard first) and has been removed rather than fixed in three places.
 
 # --- Explorer Restart ---
 Write-Host "Restarting Explorer to apply UI changes..."

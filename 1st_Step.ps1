@@ -40,8 +40,7 @@ function Remove-SetupBlueprintFiles {
     $blueprintFiles = @(
         "RenamePC.ps1",
         "DefaultAccounts.ps1",
-        "MITUser.ps1",
-        "secrets.template.psd1"
+        "MITUser.ps1"
     )
     foreach ($f in $blueprintFiles) {
         $path = Join-Path $Root $f
@@ -134,6 +133,11 @@ if (Test-Path "$MerionITRoot\secrets.psd1") {
         Write-Host "secrets.psd1 deleted."
     } else {
         Write-Warning "secrets.psd1 left in place - remember to delete it manually once setup is fully done."
+        $reminderPath = Join-Path $MerionITRoot "Manual-Steps-Reminder.txt"
+        $reminderLine = "[ ] Delete C:\MerionIT\secrets.psd1 - it was left in place during setup."
+        if ((Test-Path $reminderPath) -and -not (Select-String -Path $reminderPath -Pattern ([regex]::Escape($reminderLine)) -Quiet)) {
+            Add-Content -Path $reminderPath -Value "`n$reminderLine"
+        }
     }
 }
 

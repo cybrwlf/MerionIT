@@ -201,7 +201,7 @@ $services = @(
     "WPDBusEnum"                                   # Portable Device Enumerator Service
     "WpnService"                                   # WpnService (Push Notifications may not work)
     #"wscsvc"                                      # Windows Security Center Service
-    "WSearch"                                      # Windows Search
+    #"WSearch"                                     # Windows Search - left running (Automatic); the taskbar search box depends on it
     "XblAuthManager"                               # Xbox Live Auth Manager (Disabling Breaks Xbox Live Games)
     "XblGameSave"                                  # Xbox Live Game Save Service (Disabling Breaks Xbox Live Games)
     "XboxNetApiSvc"                                # Xbox Live Networking Service (Disabling Breaks Xbox Live Games)
@@ -432,7 +432,10 @@ Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentD
 
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds" -Name "EnableFeeds" -Type DWord -Value 0 -ErrorAction SilentlyContinue
 
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "EnableDynamicContentInWSB" -Type DWord -Value 0 -ErrorAction SilentlyContinue
+# Search Highlights (the animated icon in the search box) is handled by
+# tweaks\win11-search-highlights-off.ps1, which actually creates the key first - this line never
+# worked (HKLM:\...\Windows Search doesn't exist by default, so Set-ItemProperty silently no-ops
+# without a New-Item guard first) and has been removed rather than fixed in three places.
 
 Write-Host "Restarting Explorer to apply UI changes..."
 Stop-Process -processName: Explorer -force -ErrorAction SilentlyContinue # This will restart the Explorer service to make this work.

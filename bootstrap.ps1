@@ -40,10 +40,15 @@ if (-not $extractedFolder) {
     throw "Extraction produced no folder - the downloaded zip may be empty or invalid. Aborting before touching $Dest."
 }
 
+# Repo-only files that serve no purpose on an actual machine - never synced to $Dest. Removing a
+# name from here also makes the NEXT bootstrap run clean up any stale copy already on disk (it's
+# just an ordinary manifest-tracked file at that point).
+$ExcludeFromSync = @("secrets.template.psd1", "README.md", ".gitattributes", ".gitignore")
+
 $oldManifest = if (Test-Path $ManifestPath) { @(Get-Content $ManifestPath) } else { @() }
 $newFiles = @(Get-ChildItem -Path $extractedFolder.FullName -Recurse -File | ForEach-Object {
     $_.FullName.Substring($extractedFolder.FullName.Length + 1)
-})
+} | Where-Object { $ExcludeFromSync -notcontains $_ })
 
 # Remove files that this repo used to ship but no longer does (renamed/deleted scripts from an
 # older pull) - only ever files that were in a previous manifest, never anything else on disk.
