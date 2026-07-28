@@ -45,6 +45,11 @@ Once a full setup run finishes, `1st_Step.ps1` deletes the setup-only files that
 - `reg/` — registry fixes.
 - `2nd_Step_WIN11.bat` / `3rd_Step_WIN10.bat` — later stages, unchanged from the original process.
 
+## Notes
+
+- **OOBE internet bypass**: on the Windows 11 setup screen, press `Shift + F10` to open Command Prompt, then type `oobe\bypassnro` (no spaces) and press Enter to skip the internet-connection requirement. The machine restarts immediately after.
+- `Yardi Screening.txt` / `yardi checkscan url.txt` — Yardi resident-screening and check-scan login URLs, kept here for quick reference during manual setup.
+
 ## Security notes
 
 - Execution policy is only ever set per-invocation (`-ExecutionPolicy Unrestricted` on the command line) — never persisted system-wide. End users should never be able to run these scripts after setup is complete.

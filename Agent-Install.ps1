@@ -33,6 +33,29 @@ if ($serviceFound -or $processFound) {
 }
 
 Write-Warning "RMM agent not detected - opening the Windows Agent Installer download page (Moorestown > CSU B)..."
+Write-Host "Note: this install has never had a silent/unattended switch - the installer's own wizard still needs a human to click through it, same as always. This just saves hunting for the download."
+
+$downloadsDir = Join-Path $env:USERPROFILE "Downloads"
 Start-Process $agentUrl
-Write-Host "Download and run the installer as Administrator."
+
+Write-Host "Waiting for the download to finish (the link auto-downloads KcsSetup.exe, no click needed)..."
+$installer = $null
+$lastSize = -1
+for ($i = 0; $i -lt 24; $i++) {
+    Start-Sleep -Seconds 5
+    $candidate = Get-ChildItem -Path $downloadsDir -Filter "KcsSetup*.exe" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($candidate -and $candidate.Length -eq $lastSize) {
+        $installer = $candidate
+        break
+    }
+    $lastSize = if ($candidate) { $candidate.Length } else { -1 }
+}
+
+if ($installer) {
+    Write-Host "Launching $($installer.FullName) - click through the installer as usual."
+    Start-Process -FilePath $installer.FullName -Wait
+} else {
+    Write-Warning "Didn't see the download land in $downloadsDir after 2 minutes - download and run the installer manually."
+}
 Write-Host "If the agent turns out to already be installed under a different name, update the detection logic at the top of this script."
