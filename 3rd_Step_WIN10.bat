@@ -12,6 +12,7 @@ powershell.exe -ExecutionPolicy UnRestricted -File tweaks\basic10-11stuff.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\WIN10-ClearStartMenu.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\WIN10-removebloat-appx.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\win10-screensaver.ps1
+powershell.exe -ExecutionPolicy UnRestricted -File tweaks\win10-Disable-Taskbar-Widgets.ps1
 
 ping 127.0.0.1 -n 5 > nul
 

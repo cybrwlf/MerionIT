@@ -13,6 +13,8 @@ powershell.exe -ExecutionPolicy UnRestricted -File tweaks\WIN11-removebloat-appx
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\win11-remove-teamschaticon.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\win11-screensaver.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\win11-startmenu-left.ps1
+powershell.exe -ExecutionPolicy UnRestricted -File tweaks\win11-Disable-Taskbar-Widgets.ps1
+powershell.exe -ExecutionPolicy UnRestricted -File tweaks\win11-search-highlights-off.ps1
 
 ping 127.0.0.1 -n 5 > nul
 
@@ -20,5 +22,6 @@ echo Universal Windows Changes
 rem powershell.exe -ExecutionPolicy UnRestricted -File tweaks\numlockon.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\Clean_win_updates_cache.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\WIN11-Unpin-Taskbar-Items.ps1
+powershell.exe -ExecutionPolicy UnRestricted -File tweaks\WIN11-Pin-Taskbar-Items.ps1
 Start cmd.exe /c call powerconfig.cmd
 ping 127.0.0.1 -n 5 > nul
