@@ -1,24 +1,32 @@
 #Requires -RunAsAdministrator
 <#
+CONFIRMED NON-FUNCTIONAL on this fleet's current Windows 11 build (26100.7627) as of 2026-07-28 -
+NOT wired into 2nd_Step_WIN11.bat. Kept here for reference in case a future Windows update
+re-enables the underlying verb; don't re-wire this in without re-testing on a real machine first.
+Manual pinning is documented instead in Manual-Steps-Reminder.txt, which pops up in Notepad at
+the end of 2nd_Step_WIN11.bat/3rd_Step_WIN10.bat.
+
 Pins Word, Excel, Outlook, Chrome, Edge, and Snipping Tool to the taskbar for the current user.
 
 Windows 11 removed the supported/documented way to pin taskbar items programmatically - there is
-no public API for it. This uses a widely-relied-on but UNDOCUMENTED workaround: invoking the
+no public API for it. This tried a widely-relied-on but UNDOCUMENTED workaround: invoking the
 "Taskbarpin" shell verb on a real shell item.
 
-First attempt (kept in git history, not here) invoked the verb on items enumerated through the
-special AppsFolder shell namespace (shell:::{4234d49b-0245-4df3-b780-3893943456e1}) - confirmed
-NOT working on this fleet's current Windows 11 build (26100.7627): it reported success for every
-app with no errors, but nothing was pinned, even when run interactively at the console (ruling out
-a remote-session issue). This version invokes the same verb on the app's actual shell item instead
-- its real .lnk file for a normal desktop app, or a synthesized .lnk pointing at
-"explorer.exe shell:AppsFolder\<AppID>" for a packaged/UWP app like Snipping Tool, which has no
-real .lnk file of its own. Get-StartApps resolves the correct AppID/.lnk path for either case
-without needing to guess package family names.
+Two different implementations of this were tried and BOTH confirmed dead on this build:
+1. Invoking the verb on items enumerated through the special AppsFolder shell namespace
+   (shell:::{4234d49b-0245-4df3-b780-3893943456e1}) - reported success for every app with no
+   errors, but nothing was pinned, even when run interactively at the console.
+2. This version (Get-StartApps resolving each app's real .lnk file, or a synthesized .lnk
+   pointing at "explorer.exe shell:AppsFolder\<AppID>" for a packaged/UWP app like Snipping
+   Tool) - same result: reported success for every app, including correctly distinguishing
+   classic desktop Outlook from the built-in "Outlook for Windows" app, with zero errors, over
+   SSH, interactively, AND after a full clean reboot. Still nothing pinned.
 
-Since this still relies on undocumented behavior, Microsoft could break it again in a future
-update. If pins silently stop appearing, suspect that first before assuming this script
-regressed - verify with Get-StartApps and a manual right-click-pin test before debugging further.
+That's conclusive enough to call the "Taskbarpin" verb itself dead on this build, not a bug in
+either implementation. If revisiting this, the one remaining untried option is the officially
+supported TaskbarLayout XML / Import-StartLayout mechanism - but that's documented to mainly
+apply during initial profile/OOBE provisioning, not to an already-set-up profile, so it may not
+even be applicable to re-running setup on a live machine.
 
 Run this AFTER Install-Apps.ps1 (Chrome/Edge) and, if applicable, Fix-OfficeLanguages.ps1
 (Word/Excel/Outlook) - an app that isn't installed yet is skipped with a warning, not an error,

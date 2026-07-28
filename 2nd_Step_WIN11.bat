@@ -22,6 +22,7 @@ echo Universal Windows Changes
 rem powershell.exe -ExecutionPolicy UnRestricted -File tweaks\numlockon.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\Clean_win_updates_cache.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\WIN11-Unpin-Taskbar-Items.ps1
-powershell.exe -ExecutionPolicy UnRestricted -File tweaks\WIN11-Pin-Taskbar-Items.ps1
 Start cmd.exe /c call powerconfig.cmd
 ping 127.0.0.1 -n 5 > nul
+
+notepad.exe "C:\MerionIT\Manual-Steps-Reminder.txt"

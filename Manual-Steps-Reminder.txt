@@ -1,0 +1,22 @@
+======================================================
+ MerionIT Setup - Still To Do
+======================================================
+
+The automated setup just finished. A few things still need a human:
+
+[ ] Pin these to the taskbar - there's no reliable way to automate this
+    on the current Windows 11 build (confirmed 2026-07-28: two different
+    automated approaches both silently failed even after a reboot):
+        Word, Excel, Outlook, Chrome, Edge, Snipping Tool
+    Right-click each in the Start menu -> Pin to taskbar. ~30 seconds.
+
+[ ] If this machine is for a NEW employee's desk (not a re-image/refresh),
+    add their named account:
+        powershell -ExecutionPolicy Unrestricted -File C:\MerionIT\SingleUser.ps1 <username>
+
+[ ] Confirm the RMM agent shows up for this machine in the Kaseya portal.
+    Agent-Install.ps1 auto-detects a missing agent and now auto-launches
+    the downloaded installer, but that hasn't been confirmed end-to-end on
+    a genuinely unenrolled machine yet - worth a quick portal check.
+
+======================================================

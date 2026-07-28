@@ -23,6 +23,7 @@ Every stage - `bootstrap.ps1`, `1st_Step.ps1`, `2nd_Step_WIN11.bat`/`3rd_Step_WI
 **Manual-only, never automatic:**
 - `backup-userfiles.ps1` — only run this by hand when offboarding someone (`powershell.exe -ExecutionPolicy Unrestricted -File C:\MerionIT\backup-userfiles.ps1`).
 - `SingleUser.ps1 <username>` — add one named account to an already-set-up machine (new hire at an existing desk) without re-running the full pipeline. Prompts for its own password at runtime, so it's fine to leave on disk indefinitely.
+- Pinning Word/Excel/Outlook/Chrome/Edge/Snipping Tool to the taskbar — Windows 11 has no working automated way to do this (see `tweaks/WIN11-Pin-Taskbar-Items.ps1`'s header for what was tried and confirmed dead). `Manual-Steps-Reminder.txt` pops up in Notepad at the end of `2nd_Step_WIN11.bat`/`3rd_Step_WIN10.bat` to flag this and a couple of other end-of-setup checks a human still needs to do.
 
 ## Automatic cleanup
 
@@ -40,7 +41,8 @@ Once a full setup run finishes, `1st_Step.ps1` deletes the setup-only files that
 - `Fix-OfficeLanguages.ps1` — installs Office fresh if missing, strips extra Dell OEM Office language packs if present, no-ops if already correct. Runs automatically every time.
 - `Agent-Install.ps1` — checks for the RMM agent, opens the installer page only if it's missing.
 - `backup-userfiles.ps1` — offboarding backup (manual).
-- `tweaks/` — Win10/11 UI and debloat tweaks.
+- `Manual-Steps-Reminder.txt` — opens in Notepad at the end of `2nd_Step_WIN11.bat`/`3rd_Step_WIN10.bat` to flag the handful of things a human still needs to do (taskbar pins, new-employee named account, RMM portal check). Edit this file directly to add/remove checklist items - it's plain text, synced to `C:\MerionIT` like everything else.
+- `tweaks/` — Win10/11 UI and debloat tweaks (includes `WIN11-Pin-Taskbar-Items.ps1`, kept for reference but NOT wired in - confirmed non-functional on the current Windows 11 build, see its header).
 - `reg/` — registry fixes.
 - `2nd_Step_WIN11.bat` / `3rd_Step_WIN10.bat` — later stages, unchanged from the original process.
 

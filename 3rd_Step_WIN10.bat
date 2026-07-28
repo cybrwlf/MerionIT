@@ -23,3 +23,5 @@ powershell.exe -ExecutionPolicy UnRestricted -File tweaks\WIN10-Unpin-Taskbar-It
 Start cmd.exe /c call powerconfig.cmd
 
 ping 127.0.0.1 -n 5 > nul
+
+notepad.exe "C:\MerionIT\Manual-Steps-Reminder.txt"
