@@ -133,10 +133,18 @@ if (Test-Path "$MerionITRoot\secrets.psd1") {
         Write-Host "secrets.psd1 deleted."
     } else {
         Write-Warning "secrets.psd1 left in place - remember to delete it manually once setup is fully done."
+        # Insert before the closing "====" banner line so this lands inside the checklist box
+        # instead of trailing after it.
         $reminderPath = Join-Path $MerionITRoot "Manual-Steps-Reminder.txt"
-        $reminderLine = "[ ] Delete C:\MerionIT\secrets.psd1 - it was left in place during setup."
+        $reminderLine = "[ ] Delete C:\MerionIT\secrets.psd1 - it was left in place during setup"
         if ((Test-Path $reminderPath) -and -not (Select-String -Path $reminderPath -Pattern ([regex]::Escape($reminderLine)) -Quiet)) {
-            Add-Content -Path $reminderPath -Value "`n$reminderLine"
+            $content = @(Get-Content -Path $reminderPath)
+            if ($content.Count -gt 0 -and $content[-1] -match '^=+$') {
+                $newContent = $content[0..($content.Count - 2)] + $reminderLine + $content[-1]
+            } else {
+                $newContent = $content + $reminderLine
+            }
+            Set-Content -Path $reminderPath -Value $newContent
         }
     }
 }

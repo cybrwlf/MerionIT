@@ -32,6 +32,8 @@ $AppXBloatware = @(
 
 	# Gaming and Xbox related
 	"Microsoft.GamingServices"
+	"Microsoft.GamingApp" # Modern Xbox app - "Microsoft.XboxApp" below is the old package name, no longer used
+	"Microsoft.XboxGameCallableUI" # Framework the modern Xbox app depends on
 	"Microsoft.MinecraftUWP"
 	"Microsoft.XboxApp"
 	"Microsoft.Xbox.TCUI"
