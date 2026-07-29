@@ -44,11 +44,18 @@ if (-not $extractedFolder) {
 # name from here also makes the NEXT bootstrap run clean up any stale copy already on disk (it's
 # just an ordinary manifest-tracked file at that point).
 $ExcludeFromSync = @("secrets.template.psd1", "README.md", ".gitattributes", ".gitignore")
+# Whole folders excluded the same way - currently just archive/, which holds dead/retired scripts
+# kept for reference (see archive/archive-summary.md). Never lands on a machine, day one or ever.
+$ExcludeFoldersFromSync = @("archive")
 
 $oldManifest = if (Test-Path $ManifestPath) { @(Get-Content $ManifestPath) } else { @() }
 $newFiles = @(Get-ChildItem -Path $extractedFolder.FullName -Recurse -File | ForEach-Object {
     $_.FullName.Substring($extractedFolder.FullName.Length + 1)
-} | Where-Object { $ExcludeFromSync -notcontains $_ })
+} | Where-Object {
+    $rel = $_
+    ($ExcludeFromSync -notcontains $rel) -and
+    (-not ($ExcludeFoldersFromSync | Where-Object { $rel -like "$_\*" }))
+})
 
 # Remove files that this repo used to ship but no longer does (renamed/deleted scripts from an
 # older pull) - only ever files that were in a previous manifest, never anything else on disk.
