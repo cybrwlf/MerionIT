@@ -4,7 +4,19 @@ New-machine / new-user setup scripts for Merion Residential. Public repo — con
 
 ## Usage
 
-On a fresh Windows 10/11 machine, from an admin PowerShell prompt:
+Fresh Windows machines default to scripts-disabled (no GPO needed to cause this - it's just
+PowerShell's out-of-the-box default when no execution policy has been configured anywhere,
+confirmed live 2026-07-29). Double-click `bootstrap.bat` as Administrator - it runs the real
+bootstrap command with a one-time `-ExecutionPolicy Bypass` that only applies to that single
+invocation, never touching the machine's actual policy setting. Every script it calls afterward
+(`1st_Step.ps1`, and everything `1st_Step.ps1` itself calls) inherits that same override
+automatically, so nothing else needs its own bypass flag.
+
+If the repo's already on disk (e.g. hand-copied via USB before this repo is reachable on
+GitHub), skip `bootstrap.bat` and just double-click `1st_Step.bat` directly instead - same
+bypass mechanism, one file instead of a download.
+
+Equivalent manual one-liner, if you'd rather type it into an admin PowerShell prompt yourself:
 
 ```powershell
 powershell.exe -ExecutionPolicy Unrestricted -Command "irm https://raw.githubusercontent.com/cybrwlf/MerionIT/master/bootstrap.ps1 | iex"
@@ -31,8 +43,8 @@ Once a full setup run finishes, `1st_Step.ps1` deletes the setup-only files that
 
 ## Layout
 
-- `bootstrap.ps1` — entry point, syncs the repo and starts setup.
-- `1st_Step.ps1` — rename detection, account setup, agent check, app install, OS-version detection, end-of-run cleanup.
+- `bootstrap.ps1` (double-click `bootstrap.bat` instead - see Usage above) — entry point, syncs the repo and starts setup.
+- `1st_Step.ps1` (double-click `1st_Step.bat` instead if the repo's already on disk) — rename detection, account setup, agent check, app install, OS-version detection, end-of-run cleanup.
 - `RenamePC.ps1` — computer naming (MRM/MRQ/MRP). Scrubbed after setup completes.
 - `DefaultAccounts.ps1` — creates `pcsadmin`/`TempUser` (and legacy `scanner`, unused for new setups) per company. Scrubbed after setup completes.
 - `SingleUser.ps1` — new-employee named local account (manual, persists indefinitely).
