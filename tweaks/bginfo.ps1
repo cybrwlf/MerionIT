@@ -2,7 +2,9 @@
 Displays system info on the desktop background via Sysinternals BGInfo. Installs BGInfo via
 winget instead of vendoring the .exe (the old process shipped a local BGinfo/ folder with the
 binary in it - this fetches it from Microsoft instead). Uses the .bgi config committed alongside
-this script (bginfo.bgi, or bginfo-white.bgi for the light variant).
+this script (bginfo.bgi). A light-theme variant (bginfo-white.bgi) was never actually wired up
+to anything - archived at archive/bginfo-white.bgi if that's wanted later
+(pass -ConfigFile "$PSScriptRoot\..\archive\bginfo-white.bgi" to use it).
 #>
 param(
     [string]$ConfigFile = "$PSScriptRoot\bginfo.bgi"

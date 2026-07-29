@@ -21,9 +21,10 @@ anything else in the repo, ever downloads or creates that file. These look like 
 incomplete attempt at the same property-branded-background idea that `MRM-screensaver.ps1`
 actually finished. Kept for reference only; `MRM-screensaver.ps1` is the one worth reviving.
 
-Note: `tweaks/win10-screensaver.ps1` (still active, called from `3rd_Step_WIN10.bat`) has this
-exact same broken-path bug and was NOT archived, since removing it would break the live Win10
-pipeline. That one needs an actual fix, not archival - flagged separately.
+Correction (2026-07-28): `tweaks/win10-screensaver.ps1` (still active, called from
+`3rd_Step_WIN10.bat`) was initially flagged as having this same broken-path bug - re-checking the
+actual file showed that was a mislabeling on the audit's part. It already uses `Ribbons.scr` with
+no external image dependency, same as `win11-screensaver.ps1`. No fix needed there.
 
 ## ClearStartMenu.ps1 — superseded
 
@@ -59,3 +60,18 @@ wired in and maintained. Never called.
 Reads app names to uninstall from `C:\merionit\SuggestedAppNames.txt` - no script anywhere in this
 repo creates or populates that file, so this would do nothing even if it were wired in. Never
 called.
+
+## bginfo-white.bgi — unused light-theme variant
+
+A light-color-scheme BGInfo config, alongside the default `tweaks/bginfo.bgi`. `tweaks/bginfo.ps1`
+supports selecting it via `-ConfigFile`, but nothing ever calls it with that override - the
+pipeline always uses the default dark variant. Kept in case the light theme is wanted later:
+`& tweaks\bginfo.ps1 -ConfigFile archive\bginfo-white.bgi`.
+
+## installwinget.ps1 — superseded fallback
+
+An older way to bootstrap winget onto a machine that doesn't have it (via a third-party PSGallery
+script, `winget-install`). Only ever referenced in a comment inside `Install-Apps.ps1` as a
+manual fallback - never actually invoked by anything, and `Install-Apps.ps1` now has its own
+tested `Wait-ForWinget` logic that handles this directly. Not verified to still work (the
+third-party script it depends on hasn't been checked since this was written).

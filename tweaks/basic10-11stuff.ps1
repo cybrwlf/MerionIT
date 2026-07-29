@@ -106,29 +106,32 @@ Write-Host "Setting Classic Right-Click Menu (Windows 11 specific tweak)..."
 # On Windows 10, it will likely have no effect.
 New-Item -Path "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" -Name "InprocServer32" -force -value "" -ErrorAction SilentlyContinue
 Write-Host "======================================="
-# Check if O&O Shutup 10 executable and config are present
+# Check if O&O Shutup 10 executable is present. The config is NOT downloaded - this repo ships
+# its own committed copy (tweaks\ooshutup10.cfg) so the actual settings applied are reviewable
+# and controlled here, not whatever happens to be live on Chris Titus's GitHub at run time.
+# Previously this downloaded a fresh config to ".\ooshutup10.cfg" every run, which silently never
+# got used anyway - relative paths here resolve against C:\MerionIT (the batch file's working
+# directory), not tweaks\, so the committed config was never actually read until this fix.
 Write-Host "Checking for O&O Shutup..."
-If (!(Test-Path ".\OOSU10.exe") -or !(Test-Path ".\ooshutup10.cfg")) {
-    Write-Host "Downloading O&O Shutup and config with Recommended Settings"
-    # Download config file
-    try {
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ChrisTitusTech/win10script/master/ooshutup10.cfg" -OutFile "ooshutup10.cfg" -ErrorAction Stop
-    } catch {
-        Write-Error "Failed to download ooshutup10.cfg: $($_.Exception.Message)"
-    }
-    # Download executable
+$OOSUConfig = "$PSScriptRoot\ooshutup10.cfg"
+If (!(Test-Path ".\OOSU10.exe")) {
+    Write-Host "Downloading O&O Shutup executable"
     try {
         Invoke-WebRequest -Uri "https://dl5.oo-software.com/files/ooshutup10/OOSU10.exe" -OutFile "OOSU10.exe" -ErrorAction Stop
     } catch {
         Write-Error "Failed to download OOSU10.exe: $($_.Exception.Message)"
     }
 } else {
-    Write-Host "O&O Shutup executable and config found, skipping download."
+    Write-Host "O&O Shutup executable found, skipping download."
 }
-# Run O&O Shutup if executable exists
+# Run O&O Shutup if executable exists, using this repo's own committed config
 If (Test-Path ".\OOSU10.exe") {
-    Write-Host "Running O&O Shutup with Recommended Settings"
-    ./OOSU10.exe ooshutup10.cfg /quiet
+    if (Test-Path $OOSUConfig) {
+        Write-Host "Running O&O Shutup with the committed config ($OOSUConfig)"
+        ./OOSU10.exe $OOSUConfig /quiet
+    } else {
+        Write-Error "Committed ooshutup10.cfg not found at $OOSUConfig - skipping O&O Shutup rather than falling back to an unreviewed config."
+    }
 } else {
     Write-Host "OOSU10.exe not found, skipping O&O Shutup execution."
 }

@@ -81,7 +81,7 @@ function Wait-ForWinget {
     }
 
     if (-not (Test-WingetAvailable)) {
-        Write-Warning "winget still not available after waiting - every app below will fall back to Scoop where possible. If that's unexpected, install 'App Installer' from the Microsoft Store manually, or see installwinget.ps1 for an alternate bootstrap method."
+        Write-Warning "winget still not available after waiting - every app below will fall back to Scoop where possible. If that's unexpected, install 'App Installer' from the Microsoft Store manually (archive/installwinget.ps1 has an old, unverified third-party fallback method if that doesn't work)."
     }
 }
 
