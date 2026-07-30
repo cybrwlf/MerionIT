@@ -76,8 +76,12 @@ switch ($Company) {
         # CreateOrUpdateAccount -username "scanner" -password ("Prop" + $fourdigit) -description "Scanner Account" -addToAdministrators $true
     }
     'MRQ' {
-        $Uname = Read-Host "Enter Username (i.e. jdoe)"
-        CreateOrUpdateAccount -username $Uname -password $secrets.SingleUserTempPassword -description "MRQ User Account" -addToAdministrators $true
+        $Uname = Read-Host "Enter Username (i.e. jdoe) - leave blank to skip if the named user account was already created on a prior run"
+        if ([string]::IsNullOrWhiteSpace($Uname)) {
+            Write-Host "No username entered - skipping named user account creation."
+        } else {
+            CreateOrUpdateAccount -username $Uname -password $secrets.SingleUserTempPassword -description "MRQ User Account" -addToAdministrators $true
+        }
     }
     'MRP' {
         # Named-user creation intentionally disabled for MRP today (pcsadmin only), matching the

@@ -27,6 +27,17 @@ C:\MerionIT\logs\1st_Step-<timestamp>.log. A rename reboot cuts the transcript s
 starts a fresh one when this script relaunches after restart.
 #>
 
+
+# Prevent the machine sleeping/display-off while setup runs. Confirmed live 2026-07-29: on a
+# fresh machine's default OOBE power settings, Modern Standby can trigger mid-wait during
+# Agent-Install.ps1's human-paced installer wait, and the resume left Start-Process -Wait stuck
+# watching a stale process handle even after the installer had already exited and finished.
+# powerconfig.cmd (run later, in 2nd/3rd Step) still owns the machine's persistent power-plan
+# settings - this is only a temporary, per-process override that reverts automatically when this
+# script exits.
+Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint esFlags);' -Name Power -Namespace Native
+[Native.Power]::SetThreadExecutionState([uint32]2147483651) | Out-Null  # 0x80000003 = ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED (decimal, not hex - PowerShell parses 0x80000003 as a signed Int32 and [uint32] rejects negative values even though the bits match)
+
 $MerionITRoot = "C:\MerionIT"
 Set-Location $MerionITRoot
 $CompletionMarker = Join-Path $MerionITRoot ".setup-complete"

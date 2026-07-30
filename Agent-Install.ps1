@@ -32,30 +32,65 @@ if ($serviceFound -or $processFound) {
     return
 }
 
-Write-Warning "RMM agent not detected - opening the Windows Agent Installer download page (Moorestown > CSU B)..."
-Write-Host "Note: this install has never had a silent/unattended switch - the installer's own wizard still needs a human to click through it, same as always. This just saves hunting for the download."
+Write-Warning "RMM agent not detected."
 
-$downloadsDir = Join-Path $env:USERPROFILE "Downloads"
-Start-Process $agentUrl
+# Reuse a cached copy from apps\ if we have one, rather than re-downloading every run - useful
+# when testing/re-running setup repeatedly on the same machine in a single day. A stale copy
+# (over a day old) is removed so a re-run after that always grabs a fresh installer instead of
+# silently reusing one that might be outdated.
+$appsDir = Join-Path $PSScriptRoot "apps"
+New-Item -ItemType Directory -Path $appsDir -Force | Out-Null
+$installerPath = Join-Path $appsDir "KcsSetup.exe"
 
-Write-Host "Waiting for the download to finish (the link auto-downloads KcsSetup.exe, no click needed)..."
-$installer = $null
-$lastSize = -1
-for ($i = 0; $i -lt 24; $i++) {
-    Start-Sleep -Seconds 5
-    $candidate = Get-ChildItem -Path $downloadsDir -Filter "KcsSetup*.exe" -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($candidate -and $candidate.Length -eq $lastSize) {
-        $installer = $candidate
-        break
+if (Test-Path $installerPath) {
+    $ageDays = ((Get-Date) - (Get-Item $installerPath).LastWriteTime).TotalDays
+    if ($ageDays -ge 1) {
+        Write-Host "Cached installer in $appsDir is over a day old - removing so we grab a fresh copy."
+        Remove-Item $installerPath -Force
     }
-    $lastSize = if ($candidate) { $candidate.Length } else { -1 }
 }
 
-if ($installer) {
-    Write-Host "Launching $($installer.FullName) - click through the installer as usual."
-    Start-Process -FilePath $installer.FullName -Wait
+if (Test-Path $installerPath) {
+    Write-Host "Using cached installer already in $appsDir (downloaded less than a day ago) - skipping re-download."
 } else {
-    Write-Warning "Didn't see the download land in $downloadsDir after 2 minutes - download and run the installer manually."
+    Write-Host "Opening the Windows Agent Installer download page (Moorestown > CSU B)..."
+    Write-Host "Note: this install has never had a silent/unattended switch - the installer's own wizard still needs a human to click through it, same as always. This just saves hunting for the download."
+
+    $downloadsDir = Join-Path $env:USERPROFILE "Downloads"
+    Start-Process $agentUrl
+
+    Write-Host "Waiting for the download to finish (the link auto-downloads KcsSetup.exe, no click needed)..."
+    $downloaded = $null
+    $lastSize = -1
+    for ($i = 0; $i -lt 24; $i++) {
+        Start-Sleep -Seconds 5
+        $candidate = Get-ChildItem -Path $downloadsDir -Filter "KcsSetup*.exe" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($candidate -and $candidate.Length -eq $lastSize) {
+            $downloaded = $candidate
+            break
+        }
+        $lastSize = if ($candidate) { $candidate.Length } else { -1 }
+    }
+
+    if ($downloaded) {
+        Write-Host "Moving $($downloaded.FullName) to $installerPath"
+        Move-Item -Path $downloaded.FullName -Destination $installerPath -Force
+    } else {
+        Write-Warning "Didn't see the download land in $downloadsDir after 2 minutes - download it manually into $appsDir and re-run."
+    }
+}
+
+if (Test-Path $installerPath) {
+    Write-Host "Launching $installerPath - click through the installer as usual."
+    # Poll rather than Start-Process -Wait: confirmed live 2026-07-29 that a Modern Standby
+    # sleep/wake cycle during this human-paced wait can leave -Wait's process-exit handle stuck
+    # even after the installer has already exited. Polling Get-Process directly sidesteps that.
+    $proc = Start-Process -FilePath $installerPath -PassThru
+    while (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) {
+        Start-Sleep -Seconds 2
+    }
+} else {
+    Write-Warning "No installer available to launch - download it manually into $appsDir and run it, or re-run this script."
 }
 Write-Host "If the agent turns out to already be installed under a different name, update the detection logic at the top of this script."

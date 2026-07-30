@@ -186,6 +186,35 @@ function Test-AlreadyPresentFromOutput {
     return ($Output -match "No available upgrade found" -or $Output -match "already installed")
 }
 
+function Sync-AdvancedIPScannerToAppsDir {
+    <#
+    Advanced IP Scanner is the only genuinely portable app in this list (see the comment on its
+    entry above - Scoop just unpacks it, no real installer). Copy the whole installed version
+    folder (exe + its Qt DLLs, ~35MB - the exe alone won't run without them) into MerionIT\apps
+    so a tech has a real, standalone, grab-and-go copy without needing Scoop on whatever machine
+    they're troubleshooting from. Re-copies every run so it stays in sync with Scoop's own copy.
+    #>
+    $scoopAppRoot = Join-Path $ScoopGlobalDir "apps\advanced-ip-scanner"
+    $current = Join-Path $scoopAppRoot "current"
+    $source = if (Test-Path $current) {
+        $current
+    } else {
+        Get-ChildItem $scoopAppRoot -Directory -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+    }
+    if (-not $source) {
+        Write-Warning "Could not find the installed Advanced IP Scanner folder under $scoopAppRoot to copy into apps\."
+        return
+    }
+
+    $appsDir = Join-Path $PSScriptRoot "apps"
+    $dest = Join-Path $appsDir "advanced-ip-scanner"
+    New-Item -ItemType Directory -Path $appsDir -Force | Out-Null
+    if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+    Copy-Item -Path $source -Destination $dest -Recurse -Force
+    Write-Host "Copied Advanced IP Scanner to $dest for standalone use."
+}
+
 function Test-AdobeAcrobatConflict {
     <#
     Adobe's Reader installer refuses to run at all if full Adobe Acrobat is already installed
@@ -271,6 +300,10 @@ $results = foreach ($app in $Apps) {
                 $uninstallCmd = "scoop uninstall $($app.ScoopId) --global"
             }
         }
+    }
+
+    if ($success -and $app.Name -eq "Advanced IP Scanner") {
+        Sync-AdvancedIPScannerToAppsDir
     }
 
     if (-not $success) {
