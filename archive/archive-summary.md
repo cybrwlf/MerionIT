@@ -68,6 +68,25 @@ supports selecting it via `-ConfigFile`, but nothing ever calls it with that ove
 pipeline always uses the default dark variant. Kept in case the light theme is wanted later:
 `& tweaks\bginfo.ps1 -ConfigFile archive\bginfo-white.bgi`.
 
+## legacy-Merion-repo/ — the original pre-MerionIT-Repo GitHub repo
+
+The whole predecessor project this repo replaced: `cybrwlf/Merion` on GitHub (private, created
+2023-12-15, 11 commits, "Merion New Computer Script"). Pulled from GitHub and archived here
+2026-07-30, then the GitHub repo itself was deleted per Ricardo's explicit instruction ("archive
+it but not use it any more") - this folder is now the only remaining copy of that history.
+
+Contents: `0MerionInstall.ps1`, `0winutil.ps1` (a vendored/forked copy of Chris Titus Tech's
+Windows Utility, predating this repo's own winget/Scoop-based `Install-Apps.ps1`),
+`1ClearStartMenu.ps1`, `5powerconfig.cmd` (predecessor of this repo's own `powerconfig.cmd`),
+`6removebloat-appx.ps1`, `NewComp.ps1`, `singleuser.ps1`, `README.md`, and `Merion.7z` (a 7-zip
+archive, contents not inspected - kept as-is for reference).
+
+The numbered-filename convention (`0MerionInstall.ps1`, `1ClearStartMenu.ps1`, `5powerconfig.cmd`,
+`6removebloat-appx.ps1`) suggests a simpler, purely sequential run-order predating this repo's
+1st/2nd/3rd-Step naming and the RunOnce auto-resume logic. Kept purely as historical record - not
+wired into anything, not verified to still work, no plan to revive it (this repo already fully
+replaces it).
+
 ## installwinget.ps1 — superseded fallback
 
 An older way to bootstrap winget onto a machine that doesn't have it (via a third-party PSGallery
