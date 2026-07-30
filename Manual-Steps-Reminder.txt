@@ -8,6 +8,7 @@
 [ ] Pin Chrome to taskbar
 [ ] Pin Edge to taskbar
 [ ] Pin Snipping Tool to taskbar
+[ ] Unpin Microsoft Store from taskbar (no automated way - the underlying pin/unpin shell verb is confirmed dead on this build, see tweaks/WIN11-Pin-Taskbar-Items.ps1)
 [ ] Confirm Microsoft Store is unpinned from Start Menu (automated attempt is unverified)
 [ ] Confirm Solitaire is unpinned from Start Menu (automated attempt is unverified)
 [ ] New hire's desk? Run: SingleUser.ps1 <username>

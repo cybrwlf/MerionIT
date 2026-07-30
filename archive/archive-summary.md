@@ -68,6 +68,25 @@ supports selecting it via `-ConfigFile`, but nothing ever calls it with that ove
 pipeline always uses the default dark variant. Kept in case the light theme is wanted later:
 `& tweaks\bginfo.ps1 -ConfigFile archive\bginfo-white.bgi`.
 
+## WIN10-Unpin-Taskbar-Items.ps1 / WIN11-Unpin-Taskbar-Items.ps1 — unwired 2026-07-30, blunt and speculative
+
+Were actively wired into `2nd_Step_WIN11.bat`/`3rd_Step_WIN10.bat` (Step 13 of 14 on Win11) until
+Ricardo asked to confirm they'd been turned off. Both scripts nuke the **entire** Taskband
+registry key (and, on Win10, delete all pinned-shortcut files outright) - wiping every taskbar
+pin, not just unwanted defaults like Task View/Copilot/Microsoft Store. The Win11 version is
+openly speculative: it targets a literal placeholder path
+(`HKCU:\...\Explorer\TBD`, comment: "though exact key names can vary... an educated guess") and
+force-restarts Explorer regardless of whether anything was actually found to clear.
+
+This directly conflicted with the safer approach settled on the same day: Task View and Copilot
+are already handled via their own documented, targeted registry toggles in
+`tweaks/basic10-11stuff.ps1` (`ShowTaskViewButton`, `ShowCopilotButton`/`TurnOffWindowsCopilot`),
+and Microsoft Store's taskbar icon has no reliable automated unpin at all (see
+`WIN11-Pin-Taskbar-Items.ps1`'s header - same dead shell-verb subsystem) - it's a manual checklist
+item in `Manual-Steps-Reminder.txt` instead. A full taskbar wipe is a much bigger hammer than
+either of those and risks clearing pins a tech (or the machine's OEM image) legitimately wants
+kept. Kept here for reference only - not verified to still work, not planned to be revived as-is.
+
 ## legacy-Merion-repo/ — the original pre-MerionIT-Repo GitHub repo
 
 The whole predecessor project this repo replaced: `cybrwlf/Merion` on GitHub (private, created

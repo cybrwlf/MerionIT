@@ -56,6 +56,17 @@ if (Test-Path $installerPath) {
     Write-Host "Opening the Windows Agent Installer download page (Moorestown > CSU B)..."
     Write-Host "Note: this install has never had a silent/unattended switch - the installer's own wizard still needs a human to click through it, same as always. This just saves hunting for the download."
 
+    # Skip Edge's first-run experience before it ever opens - tweaks/basic10-11stuff.ps1 also
+    # sets this, but that runs in 2nd/3rd Step, AFTER this script. Without it set here first,
+    # this Start-Process below opens Edge for the very first time on the machine, which shows
+    # the sign-in/import-settings wizard instead of navigating straight to $agentUrl - the
+    # auto-download never fires and the polling loop below times out waiting for a file that
+    # never arrives.
+    If (!(Test-Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge")) {
+        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Force | Out-Null
+    }
+    Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Type DWord -Value 1 -ErrorAction SilentlyContinue
+
     $downloadsDir = Join-Path $env:USERPROFILE "Downloads"
     Start-Process $agentUrl
 
