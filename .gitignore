@@ -2,5 +2,11 @@ secrets.psd1
 os_version.txt
 *.log
 *.csv
+# Exception: this is a reference lookup table (CPU generation -> launch year), not per-machine
+# log/audit output. RenamePC.ps1 keeps its own inline copy for actual runtime use (bootstrap.ps1
+# doesn't sync research/ to deployed machines) - this committed copy is the source of truth to
+# keep that inline copy in sync with by hand. Actual per-machine logs (MachineDetection-Log.csv,
+# UnmatchedCPUs.csv) stay gitignored - they contain real BIOS/baseboard serial numbers.
+!research/IntelGenYears.csv
 .repo-manifest.txt
 .setup-complete

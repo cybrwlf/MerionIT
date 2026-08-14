@@ -45,7 +45,7 @@ Once a full setup run finishes, `1st_Step.ps1` deletes the setup-only files that
 
 - `bootstrap.ps1` (double-click `bootstrap.bat` instead - see Usage above) — entry point, syncs the repo and starts setup.
 - `1st_Step.ps1` (double-click `1st_Step.bat` instead if the repo's already on disk) — rename detection, account setup, agent check, app install, OS-version detection, end-of-run cleanup.
-- `RenamePC.ps1` — computer naming (MRM/MRQ/MRP). Scrubbed after setup completes.
+- `RenamePC.ps1` — computer naming (MRM/MRQ/MRP). Desktop-vs-laptop is auto-detected for every company (battery/chassis signals, see `research/Test-MachineDetection.ps1`) with a manual fallback if ambiguous. Purchase year is also auto-detected (CPU generation vs. OS install date) for every company, with a manual fallback for large/undetermined gaps (likely a rebuild). Scrubbed after setup completes.
 - `DefaultAccounts.ps1` — creates `pcsadmin`/`TempUser` (and legacy `scanner`, unused for new setups) per company. Scrubbed after setup completes.
 - `SingleUser.ps1` — new-employee named local account (manual, persists indefinitely).
 - `MITUser.ps1` — annual MIT-event loaner account (separate, one-off use). Scrubbed after setup completes.

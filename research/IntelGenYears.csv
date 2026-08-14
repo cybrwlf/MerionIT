@@ -1,0 +1,17 @@
+Generation,Codename,LaptopYear,DesktopYear,Confidence
+2,Sandy Bridge,2011,2011,Low - laptop/desktop split not individually verified; old enough this is unlikely to matter
+3,Ivy Bridge,2012,2012,Low - laptop/desktop split not individually verified; old enough this is unlikely to matter
+4,Haswell,2013,2013,Low - laptop/desktop split not individually verified; old enough this is unlikely to matter
+5,Broadwell,2014,2014,Low - laptop/desktop split not individually verified; old enough this is unlikely to matter
+6,Skylake,2015,2015,Low - laptop/desktop split not individually verified; old enough this is unlikely to matter
+7,Kaby Lake,2016,2016,Low - laptop/desktop split not individually verified; old enough this is unlikely to matter
+8,Coffee Lake,2018,2017,High - desktop Oct 2017 confirmed; mobile (Kaby Lake-R/Coffee Lake) April 2018 confirmed
+9,Coffee Lake Refresh,2019,2018,High - desktop Oct 2018 confirmed; mobile H-series April/May 2019 confirmed
+10,Comet Lake,2019,2020,High - confirmed by real field data (i7-10700 desktop); mobile U-series Aug 2019, desktop S-series May 2020
+11,Tiger Lake / Rocket Lake,2020,2021,High - mobile Sept 2020, desktop March 2021 confirmed
+12,Alder Lake,2022,2021,High - desktop Oct 2021 confirmed; mobile P/H-series Feb 2022 confirmed
+13,Raptor Lake,2023,2022,High - desktop Oct 2022 confirmed; mobile Jan 2023 (CES) confirmed
+14,Raptor Lake Refresh,2023,2023,Medium - desktop Oct 2023 confirmed; no distinct 14th-gen mobile push found (Intel shifted new mobile silicon to Core Ultra around the same time) - using desktop year as a placeholder
+Ultra1,Meteor Lake (Core Ultra Series 1),2023,2023,Medium - mobile Dec 2023 confirmed; no mainstream desktop Meteor Lake SKU exists, DesktopYear included only in case one ever reports this way
+Ultra2,Arrow Lake / Lunar Lake (Core Ultra Series 2),2024,2024,Medium - both launched within a few months of each other in 2024, not separately verified beyond that
+Ultra3,Panther Lake (Core Ultra Series 3),2026,2026,Medium - mobile-focused Jan 2026 launch confirmed; no distinct desktop SKU found as of this table's last update
