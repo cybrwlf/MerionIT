@@ -153,7 +153,7 @@ $services = @(
     "cbdhsvc_48486de"                              # Clipboard Service
     "diagnosticshub.standardcollector.service"     # Microsoft (R) Diagnostics Hub Standard Collector Service
     "DiagTrack"                                    # Diagnostics Tracking Service
-    "dmwappushservice"                             # WAP Push Message Routing Service
+    #"dmwappushservice"                            # WAP Push Message Routing Service - left at the Windows default; Intune OMA-DM sync depends on it
     "DPS"                                          # Diagnostic Policy Service (Detects and Troubleshoots Potential Problems)
     "edgeupdate"                                   # Edge Update Service
     "edgeupdatem"                                  # Another Update Service
@@ -290,9 +290,12 @@ Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Delivery
 Write-Host "Stopping and disabling Diagnostics Tracking Service..."
 Stop-Service "DiagTrack" -WarningAction SilentlyContinue
 Set-Service "DiagTrack" -StartupType Disabled -ErrorAction SilentlyContinue
-Write-Host "Stopping and disabling WAP Push Service..."
-Stop-Service "dmwappushservice" -WarningAction SilentlyContinue
-Set-Service "dmwappushservice" -StartupType Disabled -ErrorAction SilentlyContinue
+# DO NOT RE-ENABLE: dmwappushservice is the OMA-DM transport for Intune/MDM sync, not telemetry.
+# Disabling it kills Intune check-in from day one, silently - it stranded 4 machines in one of
+# our tenants for 169-269 days while Entra join, MDM cert and EnrollmentState all looked healthy.
+#Write-Host "Stopping and disabling WAP Push Service..."
+#Stop-Service "dmwappushservice" -WarningAction SilentlyContinue
+#Set-Service "dmwappushservice" -StartupType Disabled -ErrorAction SilentlyContinue
 Write-Host "Enabling F8 boot menu options..."
 bcdedit /set `{current`} bootmenupolicy Legacy | Out-Null
 
