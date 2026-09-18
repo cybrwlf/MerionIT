@@ -182,6 +182,30 @@ if ($company) {
     Write-Host "Computer name starts with '$prefix' - setting up default $company accounts..."
     $accountArgs = @{}
     if ($PSBoundParameters.ContainsKey('UserName')) { $accountArgs['UserName'] = $UserName }
+    if ($PSBoundParameters.ContainsKey('PropertyCode')) { $accountArgs['PropertyCode'] = $PropertyCode }
+
+    if ($Unattended) {
+        # -Unattended has to mean "never prompt". Both of DefaultAccounts.ps1's remaining
+        # Read-Host calls are reachable from here, so supply an answer for each rather than
+        # letting the run hang on a console nobody is watching.
+        if (-not $accountArgs.ContainsKey('UserName')) {
+            # Skipping is the safe default: it creates nothing. Add the named account afterwards
+            # with SingleUser.ps1, which survives the end-of-run cleanup precisely for this.
+            Write-Host "-Unattended with no -UserName - skipping named user account creation. Use SingleUser.ps1 to add it later."
+            $accountArgs['UserName'] = ''
+        }
+        if ($company -eq 'MRM' -and -not $accountArgs.ContainsKey('PropertyCode')) {
+            # The property code is the 4 digits already in the computer name - that's where it
+            # came from when the machine was named.
+            $m = [regex]::Match($computerName, '^MRM(\d{4})-')
+            if (-not $m.Success) {
+                throw "-Unattended needs -PropertyCode for MRM: couldn't read a 4-digit property code out of the computer name '$computerName'."
+            }
+            Write-Host "-Unattended with no -PropertyCode - using '$($m.Groups[1].Value)' from the computer name."
+            $accountArgs['PropertyCode'] = $m.Groups[1].Value
+        }
+    }
+
     & "$MerionITRoot\DefaultAccounts.ps1" -Company $company @accountArgs
     if (Test-Path "$MerionITRoot\tweaks\bginfo.ps1") {
         & "$MerionITRoot\tweaks\bginfo.ps1"
