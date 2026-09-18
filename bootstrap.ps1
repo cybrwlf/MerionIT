@@ -11,7 +11,14 @@ synced - it never touches InstallLog.csv, the backup\ folder that backup-userfil
 real user data into, or anything else not tracked by the repo.
 
 Full console output is transcribed to C:\MerionIT\logs\bootstrap-<timestamp>.log.
+
+-NoLaunch syncs the files and stops there. Use it when you're driving setup remotely and want to
+call 1st_Step.ps1 yourself with explicit parameters (e.g. -ForceRename for a reassignment),
+rather than having it start the default interactive pipeline the instant the sync lands.
 #>
+param(
+    [switch]$NoLaunch
+)
 
 $RepoZipUrl = "https://github.com/cybrwlf/MerionIT/archive/refs/heads/master.zip"
 $Dest = "C:\MerionIT"
@@ -89,6 +96,13 @@ Remove-Item $ZipPath -Force
 Remove-Item $ExtractPath -Recurse -Force
 
 Write-Host "MerionIT synced to $Dest."
+
+if ($NoLaunch) {
+    Write-Host "-NoLaunch specified - stopping here. Run $Dest\1st_Step.ps1 yourself when ready."
+    Stop-Transcript | Out-Null
+    return
+}
+
 Write-Host "Launching setup..."
 Stop-Transcript | Out-Null
 & "$Dest\1st_Step.ps1"
