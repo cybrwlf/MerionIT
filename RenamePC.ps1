@@ -27,15 +27,49 @@ updated, update the $GenYearTable below to match by hand.
 Full context on how the purchase-year rule was derived and verified (the real machine-by-machine
 data behind the "~60% in the 1-3 gap band" figure above, and what's still unproven) lives in
 research/Year-Detection-Decision.md.
+
+Every prompt below also has a matching optional parameter. Supply them and the script runs with
+no console input at all, which is what makes it usable over a remote/SYSTEM session (Kaseya, SSH)
+where Read-Host has no interactive token to read from. Omit them and the behavior is exactly as
+before. This exists for machine *reassignments* - a machine that already has a Merion name and is
+being handed to a new user - which the old flow couldn't do remotely at all.
 #>
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('MRM', 'MRQ', 'MRP', 'MIT')]
-    [string]$Company
+    [string]$Company,
+
+    # 4-digit property code / phone extension. Ignored for MIT (always "Loan").
+    [ValidatePattern('^\d{4}$')]
+    [string]$Property,
+
+    # Overrides battery/chassis auto-detection.
+    [ValidateSet('DT', 'LT')]
+    [string]$MachineType,
+
+    # 4-digit purchase year. Highest-priority year source - beats both the existing-name
+    # digit and CPU/OS-install detection below.
+    [ValidatePattern('^\d{4}$')]
+    [string]$Year,
+
+    # Single digit, matching what the prompt expects (it types "1", the name gets "01").
+    [ValidatePattern('^\d$')]
+    [string]$UniqueId,
+
+    # Skip the "Is <name> correct? [Y/N]" confirmation. Required for unattended runs, since
+    # that prompt is otherwise the one thing that always needs a human.
+    [switch]$Force,
+
+    # Stage the rename but don't reboot - lets the caller control when the machine drops,
+    # which matters when someone's actively using it or you're driving it over SSH.
+    [switch]$NoReboot
 )
 
 if ($Company -eq 'MIT') {
     $property = "Loan"
+} elseif ($Property) {
+    $property = $Property
+    Write-Host "Property/extension: $property (from -Property)"
 } else {
     $property = Read-Host "Property or Phone Extension Number? [4 digit]"
 }
@@ -47,22 +81,27 @@ if ($Company -eq 'MIT') {
 $LaptopChassisCodes = 8, 9, 10, 14, 30, 31, 32
 $DesktopChassisCodes = 3, 4, 5, 6, 7, 13, 15, 16
 
-$battery = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue
-$hasBattery = [bool]$battery
-
-$enclosure = Get-CimInstance -ClassName Win32_SystemEnclosure -ErrorAction SilentlyContinue
-$chassisCode = $enclosure.ChassisTypes | Select-Object -First 1
-$chassisSaysLaptop = $chassisCode -in $LaptopChassisCodes
-$chassisSaysDesktop = $chassisCode -in $DesktopChassisCodes
-
-$ambiguous = ($hasBattery -and $chassisSaysDesktop) -or (-not $chassisSaysLaptop -and -not $chassisSaysDesktop)
-
-if ($ambiguous) {
-    Write-Warning "Couldn't auto-detect machine type reliably (battery present: $hasBattery, chassis code: $chassisCode) - enter it manually."
-    $machinetype = Read-Host "Desktop or Laptop? [DT/LT]"
+if ($MachineType) {
+    $machinetype = $MachineType
+    Write-Host "Machine type: $machinetype (from -MachineType, detection skipped)"
 } else {
-    $machinetype = if ($hasBattery -or $chassisSaysLaptop) { "LT" } else { "DT" }
-    Write-Host "Detected machine type: $machinetype (battery present: $hasBattery, chassis code: $chassisCode)"
+    $battery = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue
+    $hasBattery = [bool]$battery
+
+    $enclosure = Get-CimInstance -ClassName Win32_SystemEnclosure -ErrorAction SilentlyContinue
+    $chassisCode = $enclosure.ChassisTypes | Select-Object -First 1
+    $chassisSaysLaptop = $chassisCode -in $LaptopChassisCodes
+    $chassisSaysDesktop = $chassisCode -in $DesktopChassisCodes
+
+    $ambiguous = ($hasBattery -and $chassisSaysDesktop) -or (-not $chassisSaysLaptop -and -not $chassisSaysDesktop)
+
+    if ($ambiguous) {
+        Write-Warning "Couldn't auto-detect machine type reliably (battery present: $hasBattery, chassis code: $chassisCode) - enter it manually."
+        $machinetype = Read-Host "Desktop or Laptop? [DT/LT]"
+    } else {
+        $machinetype = if ($hasBattery -or $chassisSaysLaptop) { "LT" } else { "DT" }
+        Write-Host "Detected machine type: $machinetype (battery present: $hasBattery, chassis code: $chassisCode)"
+    }
 }
 
 
@@ -98,66 +137,118 @@ $GenYearTable = @{
     'Ultra3' = @{ Laptop = 2026; Desktop = 2026 }
 }
 
-$cpu = Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
-$cpuName = $cpu.Name
+# Year sources, highest priority first:
+#   1. -Year.
+#   2. The year digit already encoded in this machine's *current* Merion-format name. On a
+#      reassignment (machine keeps its name and gets handed to a new user) this beats everything
+#      below: it's a year a human already established and confirmed for this exact unit. It also
+#      sidesteps a real failure mode of the CPU/OS detection - an in-place Windows upgrade or a
+#      reimage rewrites OS InstallDate to *today*, dragging the detected year forward by however
+#      long the machine has actually been in service, which silently lands inside the trusted
+#      1-3 gap band and produces a wrong year with no warning.
+#   3. CPU-generation vs. OS-install-date detection (rule documented below).
+#   4. Manual prompt.
+function Get-YearFromExistingName {
+    param([string]$Name)
+    $m = [regex]::Match($Name, '^(?:MRM|MRQ|MRP)\d{4}-(?:DT|LT)(\d)0\d+$')
+    if (-not $m.Success) { return $null }
+    # The name only carries the year's last digit, so resolve it to the most recent year
+    # ending in that digit that isn't in the future.
+    $digit = [int]$m.Groups[1].Value
+    $thisYear = (Get-Date).Year
+    $resolved = ($thisYear - ($thisYear % 10)) + $digit
+    if ($resolved -gt $thisYear) { $resolved -= 10 }
+    return $resolved
+}
 
-$genMatch = [regex]::Match($cpuName, '(\d+)(?:st|nd|rd|th)\s+Gen')
-$ultraMatch = [regex]::Match($cpuName, 'Ultra\s+\d+\s+(\d)\d{2}')
-$modelMatch = [regex]::Match($cpuName, 'i[3579]-(\d{4,5})')
-
-$genKey = $null
-if ($genMatch.Success) {
-    $genKey = $genMatch.Groups[1].Value
-} elseif ($ultraMatch.Success) {
-    $genKey = "Ultra$($ultraMatch.Groups[1].Value)"
-} elseif ($modelMatch.Success) {
-    $digits = $modelMatch.Groups[1].Value
-    $twoDigitPrefix = [int]$digits.Substring(0, 2)
-    $oneDigitPrefix = [int]$digits.Substring(0, 1)
-    if ($twoDigitPrefix -ge 10 -and $twoDigitPrefix -le 14) {
-        $genKey = "$twoDigitPrefix"
-    } elseif ($oneDigitPrefix -ge 2 -and $oneDigitPrefix -le 9) {
-        $genKey = "$oneDigitPrefix"
+$yearpurchased = $null
+if ($Year) {
+    $yearpurchased = $Year
+    Write-Host "Purchase year: $yearpurchased (from -Year)"
+} else {
+    $existingYear = Get-YearFromExistingName -Name $env:COMPUTERNAME
+    if ($existingYear) {
+        $yearpurchased = "$existingYear"
+        Write-Host "Purchase year: $yearpurchased (carried over from this machine's current name '$env:COMPUTERNAME', which already encodes a confirmed year - CPU/OS detection skipped)"
     }
 }
 
-$cpuYear = $null
-if ($genKey -and $GenYearTable.ContainsKey($genKey)) {
-    $cpuYear = if ($machinetype -eq 'DT') { $GenYearTable[$genKey].Desktop } else { $GenYearTable[$genKey].Laptop }
-}
+if (-not $yearpurchased) {
+    $cpu = Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+    $cpuName = $cpu.Name
 
-$os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
-$osInstallYear = if ($os.InstallDate) { $os.InstallDate.Year } else { $null }
+    $genMatch = [regex]::Match($cpuName, '(\d+)(?:st|nd|rd|th)\s+Gen')
+    $ultraMatch = [regex]::Match($cpuName, 'Ultra\s+\d+\s+(\d)\d{2}')
+    $modelMatch = [regex]::Match($cpuName, 'i[3579]-(\d{4,5})')
 
-$autoYear = $null
-if ($cpuYear -and $osInstallYear) {
-    $yearGap = $osInstallYear - $cpuYear
-    if ($yearGap -eq 0) {
-        $autoYear = $cpuYear
-        Write-Host "Detected purchase year: $autoYear (CPU launch year and OS install year agree - CPU: `"$cpuName`")"
-    } elseif ($yearGap -ge 1 -and $yearGap -le 3) {
-        $autoYear = $osInstallYear
-        Write-Host "Detected purchase year: $autoYear (OS install year, $yearGap year(s) after CPU launch year $cpuYear - normal buying lag - CPU: `"$cpuName`")"
+    $genKey = $null
+    if ($genMatch.Success) {
+        $genKey = $genMatch.Groups[1].Value
+    } elseif ($ultraMatch.Success) {
+        $genKey = "Ultra$($ultraMatch.Groups[1].Value)"
+    } elseif ($modelMatch.Success) {
+        $digits = $modelMatch.Groups[1].Value
+        $twoDigitPrefix = [int]$digits.Substring(0, 2)
+        $oneDigitPrefix = [int]$digits.Substring(0, 1)
+        if ($twoDigitPrefix -ge 10 -and $twoDigitPrefix -le 14) {
+            $genKey = "$twoDigitPrefix"
+        } elseif ($oneDigitPrefix -ge 2 -and $oneDigitPrefix -le 9) {
+            $genKey = "$oneDigitPrefix"
+        }
+    }
+
+    $cpuYear = $null
+    if ($genKey -and $GenYearTable.ContainsKey($genKey)) {
+        $cpuYear = if ($machinetype -eq 'DT') { $GenYearTable[$genKey].Desktop } else { $GenYearTable[$genKey].Laptop }
+    }
+
+    $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
+    $osInstallYear = if ($os.InstallDate) { $os.InstallDate.Year } else { $null }
+
+    $autoYear = $null
+    if ($cpuYear -and $osInstallYear) {
+        $yearGap = $osInstallYear - $cpuYear
+        if ($yearGap -eq 0) {
+            $autoYear = $cpuYear
+            Write-Host "Detected purchase year: $autoYear (CPU launch year and OS install year agree - CPU: `"$cpuName`")"
+        } elseif ($yearGap -ge 1 -and $yearGap -le 3) {
+            $autoYear = $osInstallYear
+            Write-Host "Detected purchase year: $autoYear (OS install year, $yearGap year(s) after CPU launch year $cpuYear - normal buying lag - CPU: `"$cpuName`")"
+        } else {
+            Write-Warning "CPU launch year ($cpuYear) and OS install year ($osInstallYear) differ by $yearGap years - too large to trust automatically (likely a rebuild/reimage on older hardware). Enter the purchase year manually."
+        }
     } else {
-        Write-Warning "CPU launch year ($cpuYear) and OS install year ($osInstallYear) differ by $yearGap years - too large to trust automatically (likely a rebuild/reimage on older hardware). Enter the purchase year manually."
+        Write-Warning "Couldn't determine both CPU launch year and OS install year for this machine (CPU: `"$cpuName`") - enter the purchase year manually."
     }
-} else {
-    Write-Warning "Couldn't determine both CPU launch year and OS install year for this machine (CPU: `"$cpuName`") - enter the purchase year manually."
+
+    if ($autoYear) {
+        $yearpurchased = "$autoYear"
+    } elseif ($Force) {
+        throw "Could not determine a purchase year automatically, and -Force was specified so there's no prompt to fall back to. Re-run with an explicit -Year."
+    } else {
+        $yearpurchased = Read-Host "Year Purchased? [e.g. 2024/2025/2026]"
+    }
 }
 
-if ($autoYear) {
-    $yearpurchased = "$autoYear"
-} else {
-    $yearpurchased = Read-Host "Year Purchased? [e.g. 2024/2025/2026]"
-}
 $yearsingle = $yearpurchased.Substring($yearpurchased.Length - 1)
-$individual = Read-Host "Unique ID 01,02,03? [1/2/3]"
+
+if ($UniqueId) {
+    $individual = $UniqueId
+    Write-Host "Unique ID: $individual (from -UniqueId)"
+} else {
+    $individual = Read-Host "Unique ID 01,02,03? [1/2/3]"
+}
 
 $NewPCName = "$Company$property-$machinetype$yearsingle" + "0$individual"
 
 Write-Host $NewPCName
 
-$namecheck = (Read-Host "Is `"$NewPCName`" correct? [Y/N]").ToUpper()
+if ($Force) {
+    Write-Host "-Force specified - skipping the confirmation prompt."
+    $namecheck = 'Y'
+} else {
+    $namecheck = (Read-Host "Is `"$NewPCName`" correct? [Y/N]").ToUpper()
+}
 
 if ($namecheck -eq 'Y') {
     # Try to auto-resume 1st_Step.ps1 after the reboot this rename requires, so the
@@ -174,8 +265,16 @@ if ($namecheck -eq 'Y') {
         Write-Warning "Could not set RunOnce resume ($($_.Exception.Message)). After reboot, log back in and re-run 1st_Step.ps1 manually to verify the rename took."
     }
 
-    Rename-Computer -NewName $NewPCName
-    Restart-Computer
+    # -Force on Rename-Computer suppresses its own confirmation, which otherwise has nothing to
+    # read from in a SYSTEM/remote session. -ErrorAction Stop so a failed rename can't fall
+    # through into a pointless reboot.
+    Rename-Computer -NewName $NewPCName -Force -ErrorAction Stop
+
+    if ($NoReboot) {
+        Write-Host "Rename staged - '$NewPCName' takes effect on the next reboot. -NoReboot specified, so this script is not restarting the machine."
+    } else {
+        Restart-Computer
+    }
 } else {
     Write-Warning "Name not changed"
 }

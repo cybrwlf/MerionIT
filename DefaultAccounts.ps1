@@ -18,7 +18,14 @@ param(
     [ValidateSet('MRM', 'MRQ', 'MRP')]
     [string]$Company,
 
-    [string]$SecretsPath = "C:\MerionIT\secrets.psd1"
+    [string]$SecretsPath = "C:\MerionIT\secrets.psd1",
+
+    # Named user account (MRQ). Supplying it skips the prompt, which is what allows an
+    # unattended/remote run. Pass an empty string to skip creation entirely.
+    [string]$UserName,
+
+    # Four-digit property code (MRM). Same idea - supply it to skip the prompt.
+    [string]$PropertyCode
 )
 
 if (-not (Test-Path $SecretsPath)) {
@@ -67,7 +74,7 @@ CreateOrUpdateAccount -username "pcsadmin" -password $secrets.PcsAdminPassword -
 
 switch ($Company) {
     'MRM' {
-        $fourdigit = Read-Host "Enter four-digit property code"
+        $fourdigit = if ($PSBoundParameters.ContainsKey('PropertyCode')) { $PropertyCode } else { Read-Host "Enter four-digit property code" }
         CreateOrUpdateAccount -username "TempUser" -password ($secrets.TempUserPasswordBase + $fourdigit) -description "Temporary User Account" -addToAdministrators $false
 
         # Legacy: local "scanner" account. All properties now use Scan-to-Email on the MFP, so new
@@ -76,7 +83,7 @@ switch ($Company) {
         # CreateOrUpdateAccount -username "scanner" -password ("Prop" + $fourdigit) -description "Scanner Account" -addToAdministrators $true
     }
     'MRQ' {
-        $Uname = Read-Host "Enter Username (i.e. jdoe) - leave blank to skip if the named user account was already created on a prior run"
+        $Uname = if ($PSBoundParameters.ContainsKey('UserName')) { $UserName } else { Read-Host "Enter Username (i.e. jdoe) - leave blank to skip if the named user account was already created on a prior run" }
         if ([string]::IsNullOrWhiteSpace($Uname)) {
             Write-Host "No username entered - skipping named user account creation."
         } else {

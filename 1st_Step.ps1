@@ -25,7 +25,40 @@ Full console output (including everything RenamePC.ps1/DefaultAccounts.ps1/Agent
 Install-Apps.ps1 print, since they run in-process from here) is transcribed to
 C:\MerionIT\logs\1st_Step-<timestamp>.log. A rename reboot cuts the transcript short - RunOnce
 starts a fresh one when this script relaunches after restart.
+
+Reassigning an already-named machine to a new user: the rename gate below only fires on a
+factory "DES*" name, so a machine that already has a Merion name could never be renamed through
+this script - it fell straight through to account setup and kept the old user's name forever.
+Pass -ForceRename (plus the RenamePC.ps1 parameters you want) to take that path deliberately.
+-Unattended additionally removes the two confirmation prompts here, so the whole thing can run
+over Kaseya/SSH with no interactive console.
 #>
+param(
+    # Normally inferred from the computer name. Needed with -ForceRename when the current name
+    # is a factory one, and lets a machine move between companies.
+    [ValidateSet('MRM', 'MRQ', 'MRP')]
+    [string]$Company,
+
+    # Run the rename step even though this machine already has a non-"DES" name.
+    [switch]$ForceRename,
+
+    # Passed straight through to RenamePC.ps1 - see its param block for meanings.
+    [string]$Property,
+    [ValidateSet('DT', 'LT')]
+    [string]$MachineType,
+    [string]$Year,
+    [string]$UniqueId,
+    [switch]$NoReboot,
+
+    # Passed through to DefaultAccounts.ps1 as the MRQ named-user account.
+    [string]$UserName,
+
+    # Auto-answer the confirmation prompts in this script. Does NOT delete secrets.psd1 - that
+    # needs -DeleteSecrets, deliberately, so a credential file is never removed by implication.
+    [switch]$Unattended,
+
+    [switch]$DeleteSecrets
+)
 
 
 # Prevent the machine sleeping/display-off while setup runs. Confirmed live 2026-07-29: on a
@@ -84,10 +117,33 @@ function Select-Company {
     }
 }
 
-if ($prefix -ieq "DES") {
-    Write-Host "Computer name starts with 'DES' - renaming PC..."
-    $company = Select-Company
-    & "$MerionITRoot\RenamePC.ps1" -Company $company
+# This has to stay ahead of the .setup-complete block below: that block scrubs RenamePC.ps1 off
+# disk the moment it runs, so a rename attempted after it would find the script already gone.
+if ($prefix -ieq "DES" -or $ForceRename) {
+    if ($ForceRename) {
+        Write-Host "-ForceRename specified - renaming '$computerName' even though it isn't a factory name..."
+    } else {
+        Write-Host "Computer name starts with 'DES' - renaming PC..."
+    }
+
+    if ($Company) {
+        $company = $Company
+    } elseif ($Unattended) {
+        throw "-Unattended needs -Company as well - there's no console here to answer the company prompt."
+    } else {
+        $company = Select-Company
+    }
+
+    # Only forward the parameters actually supplied, so RenamePC.ps1 falls back to its own
+    # detection/prompts for anything left out.
+    $renameArgs = @{}
+    foreach ($p in 'Property', 'MachineType', 'Year', 'UniqueId') {
+        if ($PSBoundParameters.ContainsKey($p)) { $renameArgs[$p] = $PSBoundParameters[$p] }
+    }
+    if ($Unattended) { $renameArgs['Force'] = $true }
+    if ($NoReboot) { $renameArgs['NoReboot'] = $true }
+
+    & "$MerionITRoot\RenamePC.ps1" -Company $company @renameArgs
     # RenamePC.ps1 reboots the machine (rename requires it) - nothing more to do this session.
     return
 }
@@ -99,7 +155,12 @@ if (Test-Path $CompletionMarker) {
 
     $completedOn = Get-Content $CompletionMarker -Raw
     Write-Warning "This machine looks already set up (completed $completedOn)."
-    $confirm = Read-Host "Re-running will reapply tweaks and may reset Start Menu/taskbar customizations. Continue? [Y/N]"
+    if ($Unattended) {
+        Write-Host "-Unattended specified - continuing anyway. Tweaks will be reapplied and any Start Menu/taskbar customizations may be reset."
+        $confirm = 'Y'
+    } else {
+        $confirm = Read-Host "Re-running will reapply tweaks and may reset Start Menu/taskbar customizations. Continue? [Y/N]"
+    }
     if ($confirm -notmatch '^[Yy]') {
         Write-Host "Stopping here. If you just need to add a user or refresh an app, run SingleUser.ps1 / Install-Apps.ps1 directly instead."
         return
@@ -115,9 +176,13 @@ $company = switch -Regex ($prefix) {
     default { $null }
 }
 
+if ($Company) { $company = $Company }
+
 if ($company) {
     Write-Host "Computer name starts with '$prefix' - setting up default $company accounts..."
-    & "$MerionITRoot\DefaultAccounts.ps1" -Company $company
+    $accountArgs = @{}
+    if ($PSBoundParameters.ContainsKey('UserName')) { $accountArgs['UserName'] = $UserName }
+    & "$MerionITRoot\DefaultAccounts.ps1" -Company $company @accountArgs
     if (Test-Path "$MerionITRoot\tweaks\bginfo.ps1") {
         & "$MerionITRoot\tweaks\bginfo.ps1"
     }
@@ -138,7 +203,15 @@ if ($company) {
 & "$MerionITRoot\Fix-OfficeLanguages.ps1"
 
 if (Test-Path "$MerionITRoot\secrets.psd1") {
-    $confirmDelete = Read-Host "Account setup complete. Delete secrets.psd1 now? [Y/N]"
+    if ($DeleteSecrets) {
+        $confirmDelete = 'Y'
+    } elseif ($Unattended) {
+        # Deliberately NOT deleted just because the run was unattended - removing a credential
+        # file has to be asked for explicitly. The else branch below logs a reminder instead.
+        $confirmDelete = 'N'
+    } else {
+        $confirmDelete = Read-Host "Account setup complete. Delete secrets.psd1 now? [Y/N]"
+    }
     if ($confirmDelete -ieq 'Y') {
         Remove-Item "$MerionITRoot\secrets.psd1" -Force
         Write-Host "secrets.psd1 deleted."
