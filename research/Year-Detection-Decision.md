@@ -131,12 +131,55 @@ and is strictly better than what existed before. The alternative (falling back t
 *any* nonzero gap, or waiting for a bigger sample before deciding at all) was explicitly
 considered and rejected in favor of shipping this now.
 
+## Update 2026-09-18: existing-name carry-over now takes priority
+
+The rule above is unchanged, but it is no longer the *first* thing consulted. `RenamePC.ps1` now
+picks a year from these sources, highest priority first:
+
+1. An explicit `-Year` parameter.
+2. **The year digit already encoded in the machine's current Merion-format name**, if it has one.
+3. The CPU-vs-OS-install rule documented above.
+4. The manual prompt.
+
+**Why (2) was added.** A machine being *reassigned* - it already has a Merion name and is being
+handed to a new user - breaks the rule above systematically, not occasionally. An in-place Windows
+upgrade or a reimage rewrites `Win32_OperatingSystem.InstallDate` to *today*, so `osInstallYear`
+drifts forward by however long the machine has actually been in service. On a 2023 laptop being
+upgraded to Win11 in 2026, that produces a gap of 3 - which sits squarely inside the "normal
+buying lag" band the rule *trusts*, so it auto-fills the wrong year and prints no warning at all.
+This is the same root cause as the two failures in the table above (`MRQ7592-LT301`, `MIP3004-LT301`),
+except that on a reassignment it is guaranteed rather than a coincidence.
+
+The existing name is better evidence than any of the detected signals: it's a year a human already
+established and confirmed for that specific unit.
+
+**Verification.** Checked against the same known-true machines in `MachineDetection-Log.csv`:
+
+| Machine | True year (from name) | Carry-over answer | Old rule's answer |
+|---|---|---|---|
+| MRM8065-DT201 | 2022 | ✅ 2022 | ✅ 2022 |
+| MRP3068-LT502 | 2025 | ✅ 2025 | ✅ 2025 |
+| MRQ3049-LT101 | 2021 | ✅ 2021 | fell back to manual (gap 6) |
+| MRQ2028-LT301 | 2023 | ✅ 2023 | ❌ would give 2026 after the Win11 upgrade |
+
+4/4, versus 3/5 for the old rule inside the band it auto-decides. It correctly declines to match
+on factory names (`DESKTOP-*`) and on `MITLOAN-*`, both of which fall through to detection exactly
+as before - so **nothing changes for a genuinely fresh machine**, which is the case the original
+rule was designed for and is still good at.
+
+The single-digit year in the name is resolved to a 4-digit year by taking the most recent year
+ending in that digit that isn't in the future (digit `3` in 2026 → 2023; digit `8` → 2018, not
+2028). Only the last digit ever reaches the final name, so this affects what the tech is shown for
+confirmation, not the name itself.
+
 ## What's still open / unproven
 
 - **Not yet run against a real machine in the field.** Everything above was verified against
   logged/historical data (`MachineDetection-Log.csv`), not by actually running the updated
   `RenamePC.ps1` during a live setup. Next real-machine setup should be watched to confirm it
-  behaves as expected.
+  behaves as expected. The `MRQ2028-LT301` → `MRQ7589-LT301` reassignment (2026-09-18) is the
+  first live run; worth capturing what the CPU/OS signals actually reported on it, since it's
+  also the first direct measurement of the post-upgrade `InstallDate` drift described above.
 - **Sample size is small** (8 machines, only 5 in the gap-1-3 band). If more field data comes in
   and the 60% figure moves a lot in either direction, the "wire it in anyway" call might deserve a
   second look.
