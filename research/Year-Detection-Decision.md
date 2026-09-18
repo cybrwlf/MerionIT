@@ -144,23 +144,49 @@ picks a year from these sources, highest priority first:
 **Why (2) was added.** A machine being *reassigned* - it already has a Merion name and is being
 handed to a new user - breaks the rule above systematically, not occasionally. An in-place Windows
 upgrade or a reimage rewrites `Win32_OperatingSystem.InstallDate` to *today*, so `osInstallYear`
-drifts forward by however long the machine has actually been in service. On a 2023 laptop being
-upgraded to Win11 in 2026, that produces a gap of 3 - which sits squarely inside the "normal
-buying lag" band the rule *trusts*, so it auto-fills the wrong year and prints no warning at all.
-This is the same root cause as the two failures in the table above (`MRQ7592-LT301`, `MIP3004-LT301`),
-except that on a reassignment it is guaranteed rather than a coincidence.
+drifts forward by however long the machine has actually been in service. The rule's whole premise
+is that `osInstallYear` approximates when the unit was deployed, and on a reassignment that
+premise is simply false.
+
+Which way it fails depends on how old the CPU is, and both outcomes are bad for an unattended run:
+
+- **CPU launched within 3 years of today** (in 2026: 13th gen, 14th gen, Ultra) - the drifted gap
+  still lands inside the trusted 1-3 band, so the rule auto-fills the *current* year with no
+  warning at all. Silent wrong answer. Same root cause as the `MRQ7592-LT301` / `MIP3004-LT301`
+  failures in the table above, but guaranteed rather than coincidental.
+- **CPU older than that** - the drifted gap exceeds 3, the rule correctly refuses to guess and
+  falls back to the manual prompt. Safe, but it means a remote/unattended run stops dead at a
+  prompt nobody is there to answer.
 
 The existing name is better evidence than any of the detected signals: it's a year a human already
 established and confirmed for that specific unit.
 
-**Verification.** Checked against the same known-true machines in `MachineDetection-Log.csv`:
+**Field measurement, 2026-09-18 (`MRQ2028-LT301`, the first live reassignment).** Captured on
+Win10 immediately before the in-place Win11 upgrade, which is the only moment the pre-upgrade
+value still exists:
+
+| Signal | Pre-upgrade (measured) | Post-upgrade (predicted) |
+|---|---|---|
+| CPU | 12th Gen i7-1265U → `cpuYear` 2022 | unchanged |
+| `InstallDate` | **2023-02-13** → `osInstallYear` 2023 | 2026 |
+| Gap | 1 → inside 1-3 band | 4 → exceeds threshold |
+| Rule's answer | 2023 ✅ correct | falls back to manual prompt |
+| Carry-over answer | 2023 ✅ | 2023 ✅ |
+
+This is the first direct confirmation that `InstallDate` really does track "when this OS was laid
+down" rather than anything about the hardware - 2023-02-13 lines up with the machine's name
+(`LT3` = 2023) and with the `Administrator` account's last logon of 2022-12-29. It also shows the
+rule was working correctly on this machine right up until the upgrade destroyed the signal it
+depends on.
+
+**Verification against historical data.** Same known-true machines as the table further up:
 
 | Machine | True year (from name) | Carry-over answer | Old rule's answer |
 |---|---|---|---|
 | MRM8065-DT201 | 2022 | ✅ 2022 | ✅ 2022 |
 | MRP3068-LT502 | 2025 | ✅ 2025 | ✅ 2025 |
 | MRQ3049-LT101 | 2021 | ✅ 2021 | fell back to manual (gap 6) |
-| MRQ2028-LT301 | 2023 | ✅ 2023 | ❌ would give 2026 after the Win11 upgrade |
+| MRQ2028-LT301 | 2023 | ✅ 2023 | ✅ pre-upgrade / manual fallback after |
 
 4/4, versus 3/5 for the old rule inside the band it auto-decides. It correctly declines to match
 on factory names (`DESKTOP-*`) and on `MITLOAN-*`, both of which fall through to detection exactly
