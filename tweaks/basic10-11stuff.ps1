@@ -33,24 +33,21 @@ New-Item -ItemType Directory -Path (Split-Path $logPath) -Force | Out-Null
 Start-Transcript -Path $logPath -Append
 
 # ---------------------------------------------------------------------------------------------
-# Interactive-session guard. Added 2026-09-21 after two calls in this script were found to block
-# forever when setup is driven remotely (SSH, Kaseya, a scheduled task - anything in session 0):
+# 2026-09-21: this script previously contained two calls that blocked forever when setup was
+# driven remotely (SSH, Kaseya, a scheduled task - anything without a desktop), taking the whole
+# tweaks stage down with them and silently skipping every step that followed:
 #
-#   - cleanmgr.exe /VERYLOWDISK        waits on a completion dialog that can never be shown.
-#                                      Measured blocked at 18.1 minutes on MRM8065-DT201.
-#   - Start-Process taskmgr.exe + an unbounded Do/Until waiting for Task Manager to write its
-#     Preferences registry value, which it never writes without a desktop.
+#   - cleanmgr.exe /VERYLOWDISK     waited on a completion dialog that could never be shown.
+#                                   Measured blocked at 18.1 minutes on MRM8065-DT201.
+#   - Start-Process taskmgr.exe + an unbounded Do/Until waiting for a registry value Task Manager
+#                                   never writes without a desktop.
 #
-# Neither had a timeout, and the batch files that call this script don't check exit codes, so a
-# hang here silently swallowed every remaining tweak step. See MerionIT-PRD.md Known Issue #11.
+# Neither had a timeout, and the batch files calling this script don't check exit codes, so the
+# failure was invisible. Both are now replaced with unattended equivalents - see the comments at
+# each site below. Full write-up in MerionIT-PRD.md Known Issue #11.
 #
-# Both tweaks are cosmetic and only meaningful to a user sitting at the machine, so skipping them
-# in a non-interactive run loses nothing real.
-function Test-InteractiveSession {
-    # SessionId 0 is the services/non-interactive session. UserInteractive alone is not enough -
-    # an SSH logon can report true while still having no desktop to draw on.
-    return ([Environment]::UserInteractive -and (Get-Process -Id $PID).SessionId -ne 0)
-}
+# Lesson worth keeping: nothing in this script may launch a GUI process and wait on it.
+# ---------------------------------------------------------------------------------------------
 
 Write-Host "======================================="
 Write-Host "Creating Restore Point in case something bad happens"
@@ -113,20 +110,26 @@ If (!(Test-Path "HKLM:\SYSTEM\Setup\MoSetup")) {
 }
 Set-ItemProperty -Path "HKLM:\SYSTEM\Setup\MoSetup" -Name "AllowUpgradesWithUnsupportedTPM" -Type DWord -Value 1 -ErrorAction SilentlyContinue
 Write-Host "======================================="
-Write-Host "Running Disk Cleanup on Drive C:..."
-# /VERYLOWDISK is cleanmgr's interactive mode - it ends with a summary dialog. With no desktop
-# it blocks indefinitely (see Test-InteractiveSession above). The 10-minute cap is a backstop in
-# case it stalls even in an interactive session; Clean_win_updates_cache.ps1 later in the batch
-# already covers the Windows Update cache, which is the bulk of what this reclaims.
-if (Test-InteractiveSession) {
-    $cm = Start-Process -FilePath "cleanmgr.exe" -ArgumentList "/d C: /VERYLOWDISK" -PassThru
-    if (-not $cm.WaitForExit(600000)) {
-        Write-Warning "Disk Cleanup still running after 10 minutes - killing it and moving on."
-        Stop-Process -Id $cm.Id -Force -ErrorAction SilentlyContinue
-    }
+Write-Host "Reclaiming disk space..."
+# Replaced cleanmgr.exe /VERYLOWDISK, 2026-09-21. Every cleanmgr mode ends in a dialog or a
+# progress window, so none of them are safe without a desktop - /VERYLOWDISK blocked for 18+
+# minutes on MRM8065-DT201 and took the whole tweaks stage down with it. /sagerun is the usual
+# deployment workaround but still renders a window, which trades a certain hang for a likely one.
+#
+# These call the same underlying cleanup directly. They run identically interactive or not, so
+# every machine gets the same result regardless of how it was built - which cleanmgr never did.
+# Component store cleanup is also the larger reclaim by far (typically GBs vs MBs); temp files
+# are handled above and the Windows Update cache by Clean_win_updates_cache.ps1 later on.
+$dism = Start-Process -FilePath "dism.exe" -ArgumentList "/Online /Cleanup-Image /StartComponentCleanup" `
+    -NoNewWindow -PassThru
+if (-not $dism.WaitForExit(1800000)) {   # 30 min backstop - this one legitimately takes a while
+    Write-Warning "Component store cleanup still running after 30 minutes - killing it and moving on."
+    Stop-Process -Id $dism.Id -Force -ErrorAction SilentlyContinue
 } else {
-    Write-Host "  Skipped - no interactive desktop (cleanmgr /VERYLOWDISK would block forever here)."
+    Write-Host "  Component store cleanup finished (exit $($dism.ExitCode))."
 }
+Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+Write-Host "  Recycle Bin emptied."
 Write-Host "======================================="
 Write-Host "Disabling Notifications and Action Center..."
 New-Item -Path "HKCU:\Software\Policies\Microsoft\Windows" -Name "Explorer" -force | Out-Null
@@ -340,27 +343,29 @@ Set-Service "SysMain" -StartupType Disabled -ErrorAction SilentlyContinue
 
 # Task Manager Details (Applies to specific older builds, handled by conditional check)
 If ((get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name CurrentBuild).CurrentBuild -lt 22557) {
-    if (-not (Test-InteractiveSession)) {
-        # taskmgr never writes Preferences without a desktop, so the wait below can never be
-        # satisfied. Note this is NOT recoverable by killing taskmgr later - that guarantees the
-        # value never appears and turns a blocked wait into a permanent spin.
-        Write-Host "Showing task manager details - SKIPPED, no interactive desktop."
+    # Was: launch taskmgr.exe, then wait (unbounded) for it to create its Preferences blob, then
+    # flip byte 28 to force the "more details" view. Task Manager is a GUI app - with no desktop
+    # it never writes that value, so the wait could never complete. Killing the hung taskmgr made
+    # it strictly worse: the value then never appears at all, turning a block into a permanent spin.
+    #
+    # There is no unattended way to make Task Manager create that blob, and synthesising one is
+    # not safe - the format is undocumented and varies by build. So this is now opportunistic:
+    # flip the byte if the value already exists, skip if it doesn't. Launches nothing, never
+    # blocks, and behaves identically interactive or not.
+    #
+    # Honest caveat: on a fresh build nobody has opened Task Manager under the setup account yet,
+    # so this will usually be a no-op. That, plus the build gate below 22557 (every such build is
+    # now out of support) and the fact that it writes to HKCU and therefore only ever reaches the
+    # setup account rather than the end user (PRD #13), makes this whole block a deletion
+    # candidate rather than something worth preserving.
+    $tmKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\TaskManager"
+    $preferences = Get-ItemProperty -Path $tmKey -Name "Preferences" -ErrorAction SilentlyContinue
+    if ($preferences -and $preferences.Preferences.Length -gt 28) {
+        Write-Host "Showing task manager details..."
+        $preferences.Preferences[28] = 0
+        Set-ItemProperty -Path $tmKey -Name "Preferences" -Type Binary -Value $preferences.Preferences -ErrorAction SilentlyContinue
     } else {
-        Write-Host "Showing task manager details (for builds older than 22557)..."
-        $taskmgr = Start-Process -WindowStyle Hidden -FilePath taskmgr.exe -PassThru
-        # Bounded: 100 x 100ms = 10 seconds. Previously an unbounded Do/Until with no escape.
-        $preferences = $null
-        for ($i = 0; $i -lt 100 -and -not $preferences; $i++) {
-            Start-Sleep -Milliseconds 100
-            $preferences = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\TaskManager" -Name "Preferences" -ErrorAction SilentlyContinue
-        }
-        Stop-Process $taskmgr -ErrorAction SilentlyContinue
-        if ($preferences) {
-            $preferences.Preferences[28] = 0
-            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\TaskManager" -Name "Preferences" -Type Binary -Value $preferences.Preferences -ErrorAction SilentlyContinue
-        } else {
-            Write-Warning "Task Manager never wrote its Preferences value within 10s - skipping this tweak."
-        }
+        Write-Host "Showing task manager details - skipped, Task Manager has never run under this account."
     }
 }
 else { Write-Host "Task Manager patch not run in builds 22557+ due to potential bug/irrelevance." }
