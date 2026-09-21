@@ -547,25 +547,60 @@ If (!(Test-Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Device Metadata")) {
 }
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Device Metadata" -Name "PreventDeviceMetadataFromNetwork" -Type DWord -Value 1 -ErrorAction SilentlyContinue
 If (!(Test-Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching")) {
-    New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows\DriverSearching" -Force | Out-Null
+    # Was creating HKLM:\SOFTWARE\Microsoft\Windows\DriverSearching - missing "Policies\", so it
+    # tested one path and created another. The three writes below then landed on a key that had
+    # never been created and failed silently under -ErrorAction SilentlyContinue. Fixed 2026-09-21.
+    New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching" -Force | Out-Null
 }
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching" -Name "DontPromptForWindowsUpdate" -Type DWord -Value 1 -ErrorAction SilentlyContinue
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching" -Name "DontSearchWindowsUpdate" -Type DWord -Value 1 -ErrorAction SilentlyContinue
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching" -Name "DriverUpdateWizardWuSearchEnabled" -Type DWord -Value 0 -ErrorAction SilentlyContinue
-If (!(Test-Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate")) {
-    New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" -Force | Out-Null # Added -Force
+
+# --- Windows Update policy: REMOVED, and actively cleaned up. Ricardo's call, 2026-09-21. -----
+#
+# This block used to create HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate (+ \AU) and
+# set a 365-day feature-update deferral. Three problems, all found on MRM8065-DT201:
+#
+#  1. The mere existence of keys under Policies\...\WindowsUpdate makes Windows report
+#     "Some settings are managed by your organization" and blocks the Windows 11 Upgrade
+#     Assistant outright. With Win10 now out of support and a fleet-wide Win11 migration to do,
+#     the toolkit was actively blocking the work it exists to support.
+#  2. BranchReadinessLevel was set to 20, which is not a valid value (2/4/8/16/32 are; 16 is the
+#     General Availability Channel every corporate build should use).
+#  3. The deferrals were written to HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings, the
+#     legacy non-policy path. Microsoft removed the deferral UI in Win10 1903 and ignores those
+#     values on Windows 11 - so the 365-day deferral probably never did anything, while the
+#     policy keys that *did* apply were the ones causing the banner.
+#     ("DeferQualityUpdatesPeriodInDays " was also written with a trailing space in the value
+#     name, confirmed live, so that one could never have applied on any OS.)
+#
+# Deferral and "not managed by your organization" are the same mechanism - you cannot have both.
+# Decision: drop deferral entirely and let Windows manage its own rollout staging.
+#
+# NOTE: this also drops NoAutoRebootWithLoggedOnUsers. Windows Active Hours covers the same need
+# without a policy key; set those instead if unattended reboots become a problem.
+Write-Host "Clearing legacy Windows Update policy (stops 'managed by your organization')..."
+foreach ($k in "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU",
+               "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate") {
+    if (Test-Path $k) {
+        Remove-Item -Path $k -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "  Removed $k"
+    }
 }
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" -Name "ExcludeWUDriversInQualityUpdate" -Type DWord -Value 1 -ErrorAction SilentlyContinue
-Write-Host "Disabling Windows Update automatic restart..."
-If (!(Test-Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU")) {
-    New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Force | Out-Null
+# Clear the legacy deferral values too, so re-running this remediates an already-built machine
+# rather than just declining to make it worse.
+$uxPath = "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings"
+if (Test-Path $uxPath) {
+    foreach ($v in "DeferFeatureUpdatesPeriodInDays", "DeferQualityUpdatesPeriodInDays", "DeferQualityUpdatesPeriodInDays ") {
+        if ($null -ne (Get-ItemProperty -Path $uxPath -Name $v -ErrorAction SilentlyContinue)) {
+            Remove-ItemProperty -Path $uxPath -Name $v -Force -ErrorAction SilentlyContinue
+            Write-Host "  Cleared $v"
+        }
+    }
+    # 16 = General Availability Channel, the standard corporate value.
+    Set-ItemProperty -Path $uxPath -Name "BranchReadinessLevel" -Type DWord -Value 16 -ErrorAction SilentlyContinue
 }
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "NoAutoRebootWithLoggedOnUsers" -Type DWord -Value 1 -ErrorAction SilentlyContinue
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "AUPowerManagement" -Type DWord -Value 0 -ErrorAction SilentlyContinue
 Write-Host "Disabled driver offering through Windows Update"
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" -Name "BranchReadinessLevel" -Type DWord -Value 20 -ErrorAction SilentlyContinue
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" -Name "DeferFeatureUpdatesPeriodInDays" -Type DWord -Value 365 -ErrorAction SilentlyContinue
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings" -Name "DeferQualityUpdatesPeriodInDays " -Type DWord -Value 4 -ErrorAction SilentlyContinue
 
 Write-Host "-- Outlook Bottom NavPane ---"
 # This section targets Office 2016 (version 16.0).
