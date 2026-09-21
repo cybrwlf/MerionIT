@@ -120,26 +120,32 @@ Write-Host "Reclaiming disk space..."
 # every machine gets the same result regardless of how it was built - which cleanmgr never did.
 # Component store cleanup is also the larger reclaim by far (typically GBs vs MBs); temp files
 # are handled above and the Windows Update cache by Clean_win_updates_cache.ps1 later on.
+# Output is captured to a file rather than left to inherit the console, for two reasons: DISM's
+# progress bars ("[=====  19.0%  =====]") otherwise flood the setup log with dozens of useless
+# lines, and its own closing "The operation completed successfully." is a far more reliable
+# success signal than the exit code. ExitCode came back empty every time this ran under a
+# scheduled task in session 0 (reproduced twice), while reporting correctly in an interactive
+# session - cause unknown, so it is not trusted here.
+$dismLog = Join-Path $env:TEMP "merionit-dism.log"
 $dism = Start-Process -FilePath "dism.exe" -ArgumentList "/Online /Cleanup-Image /StartComponentCleanup" `
-    -NoNewWindow -PassThru
+    -NoNewWindow -PassThru -RedirectStandardOutput $dismLog
 if (-not $dism.WaitForExit(1800000)) {   # 30 min backstop - this one legitimately takes a while
     Write-Warning "Component store cleanup still running after 30 minutes - killing it and moving on."
     Stop-Process -Id $dism.Id -Force -ErrorAction SilentlyContinue
 } else {
-    # ExitCode came back empty on the first live run (logged "finished (exit )") when this ran
-    # under a scheduled task in session 0. Not reproducible in an interactive session, where a
-    # -PassThru process object reports it fine either way - so the cause is unconfirmed and the
-    # read is guarded rather than assumed to work. Never report success we haven't actually
-    # observed; an empty exit code is "unknown", not "OK".
-    $dismExit = try { $dism.ExitCode } catch { $null }
-    if ($null -eq $dismExit) {
-        Write-Warning "Component store cleanup finished but did not report an exit code - check the DISM output above."
-    } elseif ($dismExit -eq 0) {
+    $dismOut = Get-Content $dismLog -Raw -ErrorAction SilentlyContinue
+    # Echo the meaningful lines into the setup log, minus the progress-bar noise.
+    if ($dismOut) {
+        $dismOut -split "`r?`n" | Where-Object { $_.Trim() -and $_ -notmatch '^\s*\[=' } |
+            ForEach-Object { Write-Host "    $_" }
+    }
+    if ($dismOut -match 'completed successfully') {
         Write-Host "  Component store cleanup finished OK."
     } else {
-        Write-Warning "Component store cleanup returned exit code $dismExit - check the DISM output above."
+        Write-Warning "Component store cleanup did not report success - see the DISM output above."
     }
 }
+Remove-Item $dismLog -Force -ErrorAction SilentlyContinue
 Clear-RecycleBin -Force -ErrorAction SilentlyContinue
 Write-Host "  Recycle Bin emptied."
 Write-Host "======================================="
