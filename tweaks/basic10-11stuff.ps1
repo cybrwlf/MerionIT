@@ -126,7 +126,19 @@ if (-not $dism.WaitForExit(1800000)) {   # 30 min backstop - this one legitimate
     Write-Warning "Component store cleanup still running after 30 minutes - killing it and moving on."
     Stop-Process -Id $dism.Id -Force -ErrorAction SilentlyContinue
 } else {
-    Write-Host "  Component store cleanup finished (exit $($dism.ExitCode))."
+    # ExitCode came back empty on the first live run (logged "finished (exit )") when this ran
+    # under a scheduled task in session 0. Not reproducible in an interactive session, where a
+    # -PassThru process object reports it fine either way - so the cause is unconfirmed and the
+    # read is guarded rather than assumed to work. Never report success we haven't actually
+    # observed; an empty exit code is "unknown", not "OK".
+    $dismExit = try { $dism.ExitCode } catch { $null }
+    if ($null -eq $dismExit) {
+        Write-Warning "Component store cleanup finished but did not report an exit code - check the DISM output above."
+    } elseif ($dismExit -eq 0) {
+        Write-Host "  Component store cleanup finished OK."
+    } else {
+        Write-Warning "Component store cleanup returned exit code $dismExit - check the DISM output above."
+    }
 }
 Clear-RecycleBin -Force -ErrorAction SilentlyContinue
 Write-Host "  Recycle Bin emptied."
