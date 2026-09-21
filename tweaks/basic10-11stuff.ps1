@@ -341,34 +341,12 @@ Write-Host "Stopping and disabling Superfetch service (SysMain)..."
 Stop-Service "SysMain" -WarningAction SilentlyContinue
 Set-Service "SysMain" -StartupType Disabled -ErrorAction SilentlyContinue
 
-# Task Manager Details (Applies to specific older builds, handled by conditional check)
-If ((get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name CurrentBuild).CurrentBuild -lt 22557) {
-    # Was: launch taskmgr.exe, then wait (unbounded) for it to create its Preferences blob, then
-    # flip byte 28 to force the "more details" view. Task Manager is a GUI app - with no desktop
-    # it never writes that value, so the wait could never complete. Killing the hung taskmgr made
-    # it strictly worse: the value then never appears at all, turning a block into a permanent spin.
-    #
-    # There is no unattended way to make Task Manager create that blob, and synthesising one is
-    # not safe - the format is undocumented and varies by build. So this is now opportunistic:
-    # flip the byte if the value already exists, skip if it doesn't. Launches nothing, never
-    # blocks, and behaves identically interactive or not.
-    #
-    # Honest caveat: on a fresh build nobody has opened Task Manager under the setup account yet,
-    # so this will usually be a no-op. That, plus the build gate below 22557 (every such build is
-    # now out of support) and the fact that it writes to HKCU and therefore only ever reaches the
-    # setup account rather than the end user (PRD #13), makes this whole block a deletion
-    # candidate rather than something worth preserving.
-    $tmKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\TaskManager"
-    $preferences = Get-ItemProperty -Path $tmKey -Name "Preferences" -ErrorAction SilentlyContinue
-    if ($preferences -and $preferences.Preferences.Length -gt 28) {
-        Write-Host "Showing task manager details..."
-        $preferences.Preferences[28] = 0
-        Set-ItemProperty -Path $tmKey -Name "Preferences" -Type Binary -Value $preferences.Preferences -ErrorAction SilentlyContinue
-    } else {
-        Write-Host "Showing task manager details - skipped, Task Manager has never run under this account."
-    }
-}
-else { Write-Host "Task Manager patch not run in builds 22557+ due to potential bug/irrelevance." }
+# Task Manager "more details" tweak REMOVED 2026-09-21 (Ricardo's call). It launched taskmgr.exe
+# and waited on an unbounded loop for a registry blob a GUI app only writes when it has a desktop,
+# which hung the entire tweaks stage on every remote build - see MerionIT-PRD.md Known Issue #11.
+# Deleted rather than repaired because even working it was worth almost nothing: gated to builds
+# below 22557 (all now out of support), HKCU-only so it never reached the end user (PRD #13), and
+# a no-op on a fresh build where nobody has opened Task Manager under the setup account yet.
 
 Write-Host "Showing file operations details..."
 If (!(Test-Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\OperationStatusManager")) {
