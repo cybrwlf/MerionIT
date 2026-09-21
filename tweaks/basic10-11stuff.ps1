@@ -32,6 +32,26 @@ $logPath = If ($ENV:ResourceGroup) { "$ENV:ResourceGroup\NewPC-Winutil.log" } el
 New-Item -ItemType Directory -Path (Split-Path $logPath) -Force | Out-Null
 Start-Transcript -Path $logPath -Append
 
+# ---------------------------------------------------------------------------------------------
+# Interactive-session guard. Added 2026-09-21 after two calls in this script were found to block
+# forever when setup is driven remotely (SSH, Kaseya, a scheduled task - anything in session 0):
+#
+#   - cleanmgr.exe /VERYLOWDISK        waits on a completion dialog that can never be shown.
+#                                      Measured blocked at 18.1 minutes on MRM8065-DT201.
+#   - Start-Process taskmgr.exe + an unbounded Do/Until waiting for Task Manager to write its
+#     Preferences registry value, which it never writes without a desktop.
+#
+# Neither had a timeout, and the batch files that call this script don't check exit codes, so a
+# hang here silently swallowed every remaining tweak step. See MerionIT-PRD.md Known Issue #11.
+#
+# Both tweaks are cosmetic and only meaningful to a user sitting at the machine, so skipping them
+# in a non-interactive run loses nothing real.
+function Test-InteractiveSession {
+    # SessionId 0 is the services/non-interactive session. UserInteractive alone is not enough -
+    # an SSH logon can report true while still having no desktop to draw on.
+    return ([Environment]::UserInteractive -and (Get-Process -Id $PID).SessionId -ne 0)
+}
+
 Write-Host "======================================="
 Write-Host "Creating Restore Point in case something bad happens"
 # Ensure Computer Restore is enabled before creating a restore point
@@ -94,7 +114,19 @@ If (!(Test-Path "HKLM:\SYSTEM\Setup\MoSetup")) {
 Set-ItemProperty -Path "HKLM:\SYSTEM\Setup\MoSetup" -Name "AllowUpgradesWithUnsupportedTPM" -Type DWord -Value 1 -ErrorAction SilentlyContinue
 Write-Host "======================================="
 Write-Host "Running Disk Cleanup on Drive C:..."
-cmd /c cleanmgr.exe /d C: /VERYLOWDISK
+# /VERYLOWDISK is cleanmgr's interactive mode - it ends with a summary dialog. With no desktop
+# it blocks indefinitely (see Test-InteractiveSession above). The 10-minute cap is a backstop in
+# case it stalls even in an interactive session; Clean_win_updates_cache.ps1 later in the batch
+# already covers the Windows Update cache, which is the bulk of what this reclaims.
+if (Test-InteractiveSession) {
+    $cm = Start-Process -FilePath "cleanmgr.exe" -ArgumentList "/d C: /VERYLOWDISK" -PassThru
+    if (-not $cm.WaitForExit(600000)) {
+        Write-Warning "Disk Cleanup still running after 10 minutes - killing it and moving on."
+        Stop-Process -Id $cm.Id -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-Host "  Skipped - no interactive desktop (cleanmgr /VERYLOWDISK would block forever here)."
+}
 Write-Host "======================================="
 Write-Host "Disabling Notifications and Action Center..."
 New-Item -Path "HKCU:\Software\Policies\Microsoft\Windows" -Name "Explorer" -force | Out-Null
@@ -308,15 +340,28 @@ Set-Service "SysMain" -StartupType Disabled -ErrorAction SilentlyContinue
 
 # Task Manager Details (Applies to specific older builds, handled by conditional check)
 If ((get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name CurrentBuild).CurrentBuild -lt 22557) {
-    Write-Host "Showing task manager details (for builds older than 22557)..."
-    $taskmgr = Start-Process -WindowStyle Hidden -FilePath taskmgr.exe -PassThru
-    Do {
-        Start-Sleep -Milliseconds 100
-        $preferences = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\TaskManager" -Name "Preferences" -ErrorAction SilentlyContinue
-    } Until ($preferences)
-    Stop-Process $taskmgr -ErrorAction SilentlyContinue
-    $preferences.Preferences[28] = 0
-    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\TaskManager" -Name "Preferences" -Type Binary -Value $preferences.Preferences -ErrorAction SilentlyContinue
+    if (-not (Test-InteractiveSession)) {
+        # taskmgr never writes Preferences without a desktop, so the wait below can never be
+        # satisfied. Note this is NOT recoverable by killing taskmgr later - that guarantees the
+        # value never appears and turns a blocked wait into a permanent spin.
+        Write-Host "Showing task manager details - SKIPPED, no interactive desktop."
+    } else {
+        Write-Host "Showing task manager details (for builds older than 22557)..."
+        $taskmgr = Start-Process -WindowStyle Hidden -FilePath taskmgr.exe -PassThru
+        # Bounded: 100 x 100ms = 10 seconds. Previously an unbounded Do/Until with no escape.
+        $preferences = $null
+        for ($i = 0; $i -lt 100 -and -not $preferences; $i++) {
+            Start-Sleep -Milliseconds 100
+            $preferences = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\TaskManager" -Name "Preferences" -ErrorAction SilentlyContinue
+        }
+        Stop-Process $taskmgr -ErrorAction SilentlyContinue
+        if ($preferences) {
+            $preferences.Preferences[28] = 0
+            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\TaskManager" -Name "Preferences" -Type Binary -Value $preferences.Preferences -ErrorAction SilentlyContinue
+        } else {
+            Write-Warning "Task Manager never wrote its Preferences value within 10s - skipping this tweak."
+        }
+    }
 }
 else { Write-Host "Task Manager patch not run in builds 22557+ due to potential bug/irrelevance." }
 
