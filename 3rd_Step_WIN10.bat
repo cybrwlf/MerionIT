@@ -11,6 +11,7 @@ powershell.exe -ExecutionPolicy UnRestricted -File tweaks\TurnOFFgetevenmoreouto
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\basic10-11stuff.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\WIN10-ClearStartMenu.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\WIN10-removebloat-appx.ps1
+powershell.exe -ExecutionPolicy UnRestricted -File tweaks\remove-mcafee.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\win10-screensaver.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\win10-Disable-Taskbar-Widgets.ps1
 
@@ -19,6 +20,7 @@ ping 127.0.0.1 -n 5 > nul
 echo Universal Windows Changes
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\numlockon.ps1
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\Clean_win_updates_cache.ps1
+powershell.exe -ExecutionPolicy UnRestricted -File tweaks\vendor-drivers.ps1
 Start cmd.exe /c call powerconfig.cmd
 
 ping 127.0.0.1 -n 5 > nul
