@@ -556,51 +556,76 @@ Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearchin
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching" -Name "DontSearchWindowsUpdate" -Type DWord -Value 1 -ErrorAction SilentlyContinue
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverSearching" -Name "DriverUpdateWizardWuSearchEnabled" -Type DWord -Value 0 -ErrorAction SilentlyContinue
 
-# --- Windows Update policy: REMOVED, and actively cleaned up. Ricardo's call, 2026-09-21. -----
+Write-Host "Restricted the Device Manager driver-search prompts"
+# NOTE: these three do NOT stop Windows Update from offering drivers. Verified on MRM8065-DT201
+# 2026-09-22: with all three set, a WU scan still returned Dell firmware and two Intel drivers.
+# They only suppress the Device Manager / Update Driver wizard prompts. If we ever actually need
+# to stop WU shipping drivers, that is ExcludeWUDriversInQualityUpdate under the WU policy key.
+
+# --- Windows Update policy: 7-day quality deferral, feature updates left unmanaged. -----------
+# Ricardo's call 2026-09-22, superseding the 2026-09-21 "no deferral at all" decision.
 #
-# This block used to create HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate (+ \AU) and
-# set a 365-day feature-update deferral. Three problems, all found on MRM8065-DT201:
+# History, because this block has been wrong twice. It originally created
+# Policies\...\WindowsUpdate (+ \AU) and set a 365-day FEATURE-update deferral. Three problems,
+# all found on MRM8065-DT201:
 #
-#  1. The mere existence of keys under Policies\...\WindowsUpdate makes Windows report
-#     "Some settings are managed by your organization" and blocks the Windows 11 Upgrade
-#     Assistant outright. With Win10 now out of support and a fleet-wide Win11 migration to do,
-#     the toolkit was actively blocking the work it exists to support.
-#  2. BranchReadinessLevel was set to 20, which is not a valid value (2/4/8/16/32 are; 16 is the
-#     General Availability Channel every corporate build should use).
+#  1. A feature-update deferral blocks the Windows 11 Upgrade Assistant outright. With Win10 out
+#     of support and a fleet-wide Win11 migration to do, the toolkit was blocking the work it
+#     exists to support.
+#  2. BranchReadinessLevel was set to 20, which is not a valid value (2/4/8/16/32 are).
 #  3. The deferrals were written to HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings, the
-#     legacy non-policy path. Microsoft removed the deferral UI in Win10 1903 and ignores those
-#     values on Windows 11 - so the 365-day deferral probably never did anything, while the
-#     policy keys that *did* apply were the ones causing the banner.
+#     legacy non-policy path Microsoft has ignored since Win10 1903 - so the 365-day deferral
+#     probably never applied, while the policy keys that *did* apply were the ones producing
+#     "managed by your organization".
 #     ("DeferQualityUpdatesPeriodInDays " was also written with a trailing space in the value
 #     name, confirmed live, so that one could never have applied on any OS.)
 #
-# Deferral and "not managed by your organization" are the same mechanism - you cannot have both.
-# Decision: drop deferral entirely and let Windows manage its own rollout staging.
+# What we actually want: skip the first week after each Patch Tuesday. Microsoft has a habit of
+# shipping a bad quality update, pulling it, and re-releasing a fixed build a few days later.
+# Deferring quality updates 7 days lands our installs around the 3rd Tuesday, after the bad ones
+# have been withdrawn.
 #
-# NOTE: this also drops NoAutoRebootWithLoggedOnUsers. Windows Active Hours covers the same need
-# without a policy key; set those instead if unattended reboots become a problem.
-Write-Host "Clearing legacy Windows Update policy (stops 'managed by your organization')..."
-foreach ($k in "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU",
-               "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate") {
-    if (Test-Path $k) {
-        Remove-Item -Path $k -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host "  Removed $k"
-    }
+# The trade-off, stated plainly: for those 7 days the machine is unpatched against whatever the
+# update fixed, including an out-of-band fix for something actively exploited. That case is
+# handled by hand - clear DeferQualityUpdatesPeriodInDays, push, put it back.
+#
+# On the "managed by your organization" banner: the two values set below do NOT produce it.
+# Verified on MRM8065-DT201 2026-09-22 - deferral applied, machine rebooted, no banner on the
+# Windows Update page. It is NOT true that any value under Policies\...\WindowsUpdate triggers it
+# (an earlier version of this comment claimed exactly that, and was wrong). The banner was coming
+# from NoAutoRebootWithLoggedOnUsers in the \AU branch specifically.
+#
+# Feature updates are still left completely unmanaged below - no DeferFeatureUpdatesPeriodInDays,
+# no TargetReleaseVersion, no ProductVersion, no \AU branch - because a feature-update policy is
+# what blocks the Win11 Upgrade Assistant, banner or not.
+#
+# NoAutoRebootWithLoggedOnUsers is deliberately NOT set. It lived under \AU and was the single
+# value still producing the banner after the 2026-09-21 cleanup. Active Hours covers the same
+# need without a policy key.
+$wuPolicy = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
+Write-Host "Configuring Windows Update (7-day quality deferral, feature updates unmanaged)..."
+# Wipe first, so re-running remediates a machine built by an older version of this script instead
+# of leaving its stale feature-deferral and \AU values sitting alongside the new ones.
+if (Test-Path $wuPolicy) {
+    Remove-Item -LiteralPath $wuPolicy -Recurse -Force -ErrorAction SilentlyContinue
 }
-# Clear the legacy deferral values too, so re-running this remediates an already-built machine
-# rather than just declining to make it worse.
+New-Item -Path $wuPolicy -Force | Out-Null
+Set-ItemProperty -Path $wuPolicy -Name "DeferQualityUpdatesPeriodInDays" -Type DWord -Value 7 -ErrorAction SilentlyContinue
+# 16 = General Availability Channel, the standard corporate value.
+Set-ItemProperty -Path $wuPolicy -Name "BranchReadinessLevel" -Type DWord -Value 16 -ErrorAction SilentlyContinue
+
+# Clear the legacy UX\Settings values as well. The OS ignores them, but they are confusing to
+# find later, and BranchReadinessLevel there was this script's old (wrong) home for it.
 $uxPath = "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings"
 if (Test-Path $uxPath) {
-    foreach ($v in "DeferFeatureUpdatesPeriodInDays", "DeferQualityUpdatesPeriodInDays", "DeferQualityUpdatesPeriodInDays ") {
+    foreach ($v in "DeferFeatureUpdatesPeriodInDays", "DeferQualityUpdatesPeriodInDays",
+                   "DeferQualityUpdatesPeriodInDays ", "BranchReadinessLevel") {
         if ($null -ne (Get-ItemProperty -Path $uxPath -Name $v -ErrorAction SilentlyContinue)) {
             Remove-ItemProperty -Path $uxPath -Name $v -Force -ErrorAction SilentlyContinue
-            Write-Host "  Cleared $v"
+            Write-Host "  Cleared legacy $v"
         }
     }
-    # 16 = General Availability Channel, the standard corporate value.
-    Set-ItemProperty -Path $uxPath -Name "BranchReadinessLevel" -Type DWord -Value 16 -ErrorAction SilentlyContinue
 }
-Write-Host "Disabled driver offering through Windows Update"
 
 Write-Host "-- Outlook Bottom NavPane ---"
 # This section targets Office 2016 (version 16.0).
