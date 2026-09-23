@@ -117,11 +117,16 @@ $AppXBloatware = @(
 
 # List of traditional programs to remove (e.g., OEM bloatware)
 # These are commonly found on Dell and HP machines.
+#
+# Dell Command Update is deliberately NOT in this list. It used to be ("*DellCommandUpdate*" and
+# "*Dellcommand*"), back when DCU was pure nagware. tweaks\vendor-drivers.ps1 now owns DCU - it
+# installs it and silences it - so removing it here just breaks the driver path. Observed on
+# MRM8035-LT101 2026-09-23: step 4 uninstalled the DCU that step 14 then could not find, leaving
+# the machine with SupportAssist gone AND DCU gone, i.e. no OEM driver tooling at all.
+# Dell Optimizer stays on the list; it is separate from DCU and is still unwanted.
 $TraditionalBloatwarePrograms = @(
-	"*DellCommandUpdate*"
 	"*DellDigitalDelivery*"
 	"*optimizer*"
-	"*Dellcommand*"
 	"*digialdelivery*"
 	"HPJumpStarts"
 	"HPPCHardwareDiagnosticsWindows"
@@ -167,9 +172,13 @@ if (Get-Package -Name "*optimizer*" -ErrorAction SilentlyContinue) {
     Write-Host "Found and uninstalling remaining '*optimizer*' programs..."
     Get-Package -Name "*optimizer*" | Uninstall-Package -Force -ErrorAction SilentlyContinue
 }
-if (Get-Package -Name "*command*" -ErrorAction SilentlyContinue) {
-    Write-Host "Found and uninstalling remaining '*command*' programs..."
-    Get-Package -Name "*command*" | Uninstall-Package -Force -ErrorAction SilentlyContinue
+# Catches Dell Command | Configure, Dell Command | Monitor, etc. Dell Command | Update is
+# excluded on purpose - see the note on $TraditionalBloatwarePrograms above.
+$leftoverCommand = Get-Package -Name "*command*" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -notlike "*Command*Update*" }
+if ($leftoverCommand) {
+    Write-Host "Found and uninstalling remaining '*command*' programs (keeping Dell Command | Update)..."
+    $leftoverCommand | Uninstall-Package -Force -ErrorAction SilentlyContinue
 }
 if (Get-Package -Name "*delivery*" -ErrorAction SilentlyContinue) {
     Write-Host "Found and uninstalling remaining '*delivery*' programs..."

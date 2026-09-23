@@ -133,16 +133,29 @@ if (-not (Test-Path $dcuCli)) {
     # imaged machine's network is not guaranteed.
     $installer = Get-ChildItem "C:\MerionIT\apps" -Filter "Dell-Command-Update*.EXE" -ErrorAction SilentlyContinue |
                  Sort-Object Name -Descending | Select-Object -First 1
-    if (-not $installer) {
-        Write-Warning "  Dell Command Update not installed and no installer in C:\MerionIT\apps."
-        Add-ReminderIfMissing "[ ] Install Dell Command Update (Classic) from dell.com KB 000177325, then rerun tweaks\vendor-drivers.ps1"
-        Write-Host "======================================="
-        return
+    if ($installer) {
+        Write-Host "  Installing $($installer.Name) (silent, 5-7 min)..."
+        $p = Start-Process $installer.FullName -ArgumentList @('/s') -Wait -PassThru
+        Write-Host "    installer exit: $($p.ExitCode)"
+        Start-Sleep -Seconds 10
     }
-    Write-Host "  Installing $($installer.Name) (silent, 5-7 min)..."
-    $p = Start-Process $installer.FullName -ArgumentList @('/s') -Wait -PassThru
-    Write-Host "    installer exit: $($p.ExitCode)"
-    Start-Sleep -Seconds 10
+    else {
+        # No USB. Remote machines (Kaseya-only, no way to hand-carry the installer) are the normal
+        # case for this, so fall back to winget rather than giving up. Dell.CommandUpdate is the
+        # Classic build and lands in the same ProgramFiles(x86) path checked above. It trails the
+        # dell.com release slightly (5.7.0 vs 5.7.2 on 2026-09-23), which is fine - the /configure
+        # switches below are identical across 5.7.x.
+        Write-Host "  No installer in C:\MerionIT\apps - trying winget..."
+        if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+            & winget.exe install --id Dell.CommandUpdate -e --silent `
+                --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+            Write-Host "    winget exit: $LASTEXITCODE"
+            Start-Sleep -Seconds 10
+        } else {
+            Write-Warning "  winget not available either."
+        }
+    }
+
     if (-not (Test-Path $dcuCli)) {
         Write-Warning "  dcu-cli.exe still not present after install - giving up."
         Add-ReminderIfMissing "[ ] Dell Command Update install failed - install manually and rerun tweaks\vendor-drivers.ps1"
