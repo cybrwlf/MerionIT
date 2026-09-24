@@ -55,7 +55,7 @@ param([switch]$ReportOnly, [switch]$AddToReminder)
 # fleet sweep can prove which version produced a given result - raw.githubusercontent.com caches
 # for several minutes, and a stale copy on one endpoint otherwise looks like a real difference
 # between machines. Cost us a confused round trip on 2026-09-23.
-$ScriptVersion = '2026-09-23.4'
+$ScriptVersion = '2026-09-23.5'
 
 $ReminderPath = "C:\MerionIT\Manual-Steps-Reminder.txt"
 function Add-ReminderIfMissing {
@@ -233,9 +233,32 @@ foreach ($s in 'wuauserv','bits') {
 # blockers. Reporting readiness per machine turns this sweep into a costed plan rather than a list
 # of problems.
 #
-# CPU generation is deliberately NOT judged here. Microsoft's supported-processor list is thousands
-# of entries and gets revised; guessing at it would produce confident wrong answers. The CPU name is
-# reported so a human can check the one machine it matters for.
+# CPU generation IS judged, but only where the rule is unambiguous. For Intel Core, Windows 11
+# support starts at 8th generation - that is the documented boundary, not a guess. Anything the
+# parser does not positively recognise (Xeon, Pentium, Celeron, Atom, AMD, odd model strings) is
+# returned as 'CPU-unknown' for a human rather than assumed either way. A confident wrong answer
+# here would send someone out to buy hardware they did not need.
+#
+# Model-number to generation, which is the only fiddly part:
+#   5 digits              -> first two    i7-10700 = 10,  i9-14900 = 14
+#   4 digits starting '1' -> first two    i7-1065G7 = 10, i5-1135G7 = 11   (Ice/Tiger Lake mobile)
+#   4 digits otherwise    -> first one    i7-8700 = 8,    i5-7500 = 7
+# That third case is why a naive "first digit" parser gets Ice Lake wrong and calls a 10th-gen
+# laptop a 1st-gen one.
+function Get-CpuWin11Verdict {
+    param([string]$Name)
+    if ($Name -match 'Core.{0,6}Ultra') { return @{ OK = $true; Why = 'Core Ultra' } }
+    if ($Name -match 'i[3579][- ](\d{3,5})') {
+        $m = $matches[1]
+        $gen = if ($m.Length -eq 5)                        { [int]$m.Substring(0,2) }
+               elseif ($m.Length -eq 4 -and $m[0] -eq '1') { [int]$m.Substring(0,2) }
+               elseif ($m.Length -eq 4)                    { [int]$m.Substring(0,1) }
+               else                                        { 0 }   # 3-digit = 1st gen era
+        if ($gen -ge 8) { return @{ OK = $true;  Why = "Intel gen $gen" } }
+        if ($gen -gt 0) { return @{ OK = $false; Why = "Intel gen $gen (Win11 needs 8th gen or newer)" } }
+    }
+    return @{ OK = $null; Why = 'not recognised - check Microsoft''s supported list by hand' }
+}
 $win11 = 'n/a'
 if ($osFamily -eq 'win10-EOL') {
     Say ""
@@ -270,16 +293,25 @@ if ($osFamily -eq 'win10-EOL') {
     Say "System disk : $diskGB GB total, $([math]::Round($sysDisk.FreeSpace/1GB,1)) GB free"
     if ($diskGB -lt 64) { $blockers.Add("disk ${diskGB}GB (need 64)") }
 
-    $cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
-    Say "CPU         : $cpu   <- check against Microsoft's supported list by hand"
+    $cpu     = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+    $cpuVerd = Get-CpuWin11Verdict -Name $cpu
+    Say "CPU         : $cpu"
+    Say "              -> $($cpuVerd.Why)"
+    if ($cpuVerd.OK -eq $false) { $blockers.Add("CPU $($cpuVerd.Why)") }
 
-    $win11 = if ($blockers.Count -eq 0) { 'ready-pending-CPU-check' } else { 'BLOCKED:' + ($blockers -join '; ') }
-    Say "Verdict     : $win11"
-    if ($blockers.Count -eq 0) {
-        $issues.Add("Windows 10 (out of support) but hardware looks Win11-capable - in-place upgrade is the cheap path, verify CPU")
-    } else {
+    if ($blockers.Count -gt 0) {
+        $win11 = 'BLOCKED:' + ($blockers -join '; ')
         $issues.Add("Windows 10 (out of support) and NOT Win11-capable: $($blockers -join '; ') - needs ESU or replacement")
     }
+    elseif ($null -eq $cpuVerd.OK) {
+        $win11 = 'CPU-unknown'
+        $issues.Add("Windows 10 (out of support), everything but the CPU checks out - identify '$cpu' by hand")
+    }
+    else {
+        $win11 = 'ready'
+        $issues.Add("Windows 10 (out of support) but Win11-capable - in-place upgrade, no ESU or replacement needed")
+    }
+    Say "Verdict     : $win11"
 }
 
 Say ""
