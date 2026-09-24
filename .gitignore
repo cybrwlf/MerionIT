@@ -2,6 +2,10 @@ secrets.psd1
 os_version.txt
 *.log
 *.csv
+# Per-machine diagnostic output. tools\Diag-WindowsUpdate.ps1 writes .txt transcripts here, which
+# *.log above does not catch. This repo is public, and those transcripts carry hostnames, the
+# logged-on username, a full hardware/driver inventory and the printer names visible at a property.
+logs/
 # Exception: this is a reference lookup table (CPU generation -> launch year), not per-machine
 # log/audit output. RenamePC.ps1 keeps its own inline copy for actual runtime use (bootstrap.ps1
 # doesn't sync research/ to deployed machines) - this committed copy is the source of truth to
