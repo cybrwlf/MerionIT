@@ -51,6 +51,12 @@
 #>
 param([switch]$ReportOnly, [switch]$AddToReminder)
 
+# Bump this on every change that alters output or behaviour. It is echoed in the RESULT line so a
+# fleet sweep can prove which version produced a given result - raw.githubusercontent.com caches
+# for several minutes, and a stale copy on one endpoint otherwise looks like a real difference
+# between machines. Cost us a confused round trip on 2026-09-23.
+$ScriptVersion = '2026-09-23.3'
+
 $ReminderPath = "C:\MerionIT\Manual-Steps-Reminder.txt"
 function Add-ReminderIfMissing {
     param([string]$Line)
@@ -249,8 +255,8 @@ if (-not $ReportOnly) {
 # support and on paid ESU), so it should not depend on reading build numbers by eye.
 $osFamily = if ([int]$cv.CurrentBuild -ge 22000) { 'win11' } else { 'win10-EOL' }
 Say ""
-Say ("RESULT|{0}|{1}|{2}|{3} {4}.{5}|{6}|issues={7}|mode={8}" -f `
+Say ("RESULT|{0}|{1}|{2}|{3} {4}.{5}|{6}|issues={7}|mode={8}|v={9}" -f `
         $env:COMPUTERNAME, $mfr, $osFamily,
         $cv.DisplayVersion, $cv.CurrentBuild, $cv.UBR,
         $(if ($isDell) { "dcu=$dcuHealth" } else { 'dcu=n/a' }),
-        $issues.Count, $(if ($ReportOnly) { 'report' } else { 'repair' }))
+        $issues.Count, $(if ($ReportOnly) { 'report' } else { 'repair' }), $ScriptVersion)
