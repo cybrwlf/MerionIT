@@ -70,7 +70,12 @@ $au     = "$wu\AU"
 $issues = New-Object System.Collections.Generic.List[string]
 $acted  = New-Object System.Collections.Generic.List[string]
 
-function Say($m) { Write-Host $m }
+# Write-Output, not Write-Host, on purpose. This script's primary caller is Kaseya running it as
+# SYSTEM with nobody logged on. Write-Host goes to the information stream; a remote-execution
+# harness that collects the pipeline rather than the console would silently capture nothing, and a
+# diagnostic that returns an empty result is worse than one that fails. Write-Output lands on the
+# success stream, which every harness collects, and still prints normally in a console.
+function Say($m) { Write-Output $m }
 
 $cv     = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 $mfr    = (Get-CimInstance Win32_ComputerSystem).Manufacturer
@@ -88,11 +93,11 @@ Say ""
 # ---------------------------------------------------------------- current state
 Say "--- BEFORE ---"
 if (Test-Path $wu) {
-    (Get-ItemProperty $wu | Select-Object * -Exclude PS*) | Format-List | Out-String | Write-Host
+    (Get-ItemProperty $wu | Select-Object * -Exclude PS*) | Format-List | Out-String | Write-Output
 } else { Say "  (no WindowsUpdate policy key)" }
 if (Test-Path $au) {
     Say "  AU subkey:"
-    (Get-ItemProperty $au | Select-Object * -Exclude PS*) | Format-List | Out-String | Write-Host
+    (Get-ItemProperty $au | Select-Object * -Exclude PS*) | Format-List | Out-String | Write-Output
 } else { Say "  (no AU subkey - good)" }
 
 
@@ -232,7 +237,7 @@ if (-not $ReportOnly) {
 
     Say ""
     Say "--- AFTER ---"
-    (Get-ItemProperty $wu | Select-Object * -Exclude PS*) | Format-List | Out-String | Write-Host
+    (Get-ItemProperty $wu | Select-Object * -Exclude PS*) | Format-List | Out-String | Write-Output
     Say "  AU subkey present: $(Test-Path $au)   (should be False)"
 }
 

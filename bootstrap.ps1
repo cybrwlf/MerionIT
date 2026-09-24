@@ -51,9 +51,13 @@ if (-not $extractedFolder) {
 # name from here also makes the NEXT bootstrap run clean up any stale copy already on disk (it's
 # just an ordinary manifest-tracked file at that point).
 $ExcludeFromSync = @("secrets.template.psd1", "README.md", ".gitattributes", ".gitignore")
-# Whole folders excluded the same way - currently just archive/, which holds dead/retired scripts
-# kept for reference (see archive/archive-summary.md). Never lands on a machine, day one or ever.
-$ExcludeFoldersFromSync = @("archive")
+# Whole folders excluded the same way:
+#   archive/   dead/retired scripts kept for reference (see archive/archive-summary.md)
+#   research/  design notes and investigation write-ups - documentation for whoever maintains this
+#              repo, of no use on an endpoint
+# Neither lands on a machine, day one or ever. Both were previously synced in the research/ case;
+# removing it here also cleans up stale copies already on disk at the next bootstrap.
+$ExcludeFoldersFromSync = @("archive", "research")
 
 $oldManifest = if (Test-Path $ManifestPath) { @(Get-Content $ManifestPath) } else { @() }
 $newFiles = @(Get-ChildItem -Path $extractedFolder.FullName -Recurse -File | ForEach-Object {
