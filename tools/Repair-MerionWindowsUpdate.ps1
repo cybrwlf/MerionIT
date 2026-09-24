@@ -55,7 +55,7 @@ param([switch]$ReportOnly, [switch]$AddToReminder)
 # fleet sweep can prove which version produced a given result - raw.githubusercontent.com caches
 # for several minutes, and a stale copy on one endpoint otherwise looks like a real difference
 # between machines. Cost us a confused round trip on 2026-09-23.
-$ScriptVersion = '2026-09-23.3'
+$ScriptVersion = '2026-09-23.4'
 
 $ReminderPath = "C:\MerionIT\Manual-Steps-Reminder.txt"
 function Add-ReminderIfMissing {
@@ -88,12 +88,18 @@ $mfr    = (Get-CimInstance Win32_ComputerSystem).Manufacturer
 $model  = (Get-CimInstance Win32_ComputerSystem).Model
 $isDell = $mfr -match 'Dell'
 
+# DisplayVersion alone is ambiguous - "22H2" is both Windows 10 22H2 (build 19045) and Windows 11
+# 22H2 (build 22621). Only the build separates them, and counting Windows 10 machines is a direct
+# cost question, so it must not depend on reading build numbers by eye.
+$osFamily = if ([int]$cv.CurrentBuild -ge 22000) { 'win11' } else { 'win10-EOL' }
+
 Say "=========================================================="
 Say " Merion Windows Update repair$(if ($ReportOnly) {'  [REPORT ONLY - no changes]'})"
 Say "=========================================================="
 Say "Host    : $env:COMPUTERNAME"
 Say "Vendor  : $mfr / $model"
-Say "OS      : $($cv.DisplayVersion)  build $($cv.CurrentBuild).$($cv.UBR)"
+Say "OS      : $osFamily  $($cv.DisplayVersion)  build $($cv.CurrentBuild).$($cv.UBR)"
+Say "Script  : v$ScriptVersion"
 Say ""
 
 # ---------------------------------------------------------------- current state
@@ -220,6 +226,62 @@ foreach ($s in 'wuauserv','bits') {
 
 
 # ----------------------------------------------------------------- summary
+# ------------------------------------ 5. Windows 11 readiness (Windows 10 only)
+# Windows 10 is out of support, so every win10-EOL machine is a decision: pay for ESU, upgrade in
+# place, or replace. Upgrading is by far the cheapest of the three, and the in-place path is proven
+# on this hardware class - MRM8035-LT101 (Latitude 5520) went 22H2 -> 25H2 on 2026-09-23 with no
+# blockers. Reporting readiness per machine turns this sweep into a costed plan rather than a list
+# of problems.
+#
+# CPU generation is deliberately NOT judged here. Microsoft's supported-processor list is thousands
+# of entries and gets revised; guessing at it would produce confident wrong answers. The CPU name is
+# reported so a human can check the one machine it matters for.
+$win11 = 'n/a'
+if ($osFamily -eq 'win10-EOL') {
+    Say ""
+    Say "--- WINDOWS 11 READINESS ---"
+    $blockers = New-Object System.Collections.Generic.List[string]
+
+    $tpm = Get-CimInstance -Namespace root\cimv2\security\microsofttpm -Class Win32_Tpm -ErrorAction SilentlyContinue
+    if (-not $tpm) { $blockers.Add('no TPM') }
+    else {
+        $spec = ($tpm.SpecVersion -split ',')[0].Trim()
+        $specNum = 0.0; [void][double]::TryParse($spec, [ref]$specNum)
+        Say "TPM         : $spec  enabled=$($tpm.IsEnabled_InitialValue)"
+        if (-not $tpm.IsEnabled_InitialValue) { $blockers.Add('TPM disabled') }
+        elseif ($specNum -lt 2.0)             { $blockers.Add("TPM $spec (need 2.0)") }
+    }
+
+    try {
+        $sb = Confirm-SecureBootUEFI -ErrorAction Stop
+        Say "SecureBoot  : $sb"
+        if (-not $sb) { $blockers.Add('Secure Boot off') }
+    } catch {
+        Say "SecureBoot  : not available (legacy BIOS / not UEFI)"
+        $blockers.Add('not UEFI')
+    }
+
+    $ramGB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
+    Say "RAM         : $ramGB GB"
+    if ($ramGB -lt 4) { $blockers.Add("RAM ${ramGB}GB (need 4)") }
+
+    $sysDisk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$($env:SystemDrive)'"
+    $diskGB  = [math]::Round($sysDisk.Size / 1GB, 0)
+    Say "System disk : $diskGB GB total, $([math]::Round($sysDisk.FreeSpace/1GB,1)) GB free"
+    if ($diskGB -lt 64) { $blockers.Add("disk ${diskGB}GB (need 64)") }
+
+    $cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+    Say "CPU         : $cpu   <- check against Microsoft's supported list by hand"
+
+    $win11 = if ($blockers.Count -eq 0) { 'ready-pending-CPU-check' } else { 'BLOCKED:' + ($blockers -join '; ') }
+    Say "Verdict     : $win11"
+    if ($blockers.Count -eq 0) {
+        $issues.Add("Windows 10 (out of support) but hardware looks Win11-capable - in-place upgrade is the cheap path, verify CPU")
+    } else {
+        $issues.Add("Windows 10 (out of support) and NOT Win11-capable: $($blockers -join '; ') - needs ESU or replacement")
+    }
+}
+
 Say ""
 Say "--- FINDINGS ---"
 if ($issues.Count -eq 0) { Say "  none - this machine was already correct" }
@@ -248,15 +310,9 @@ if (-not $ReportOnly) {
 }
 
 # Single machine-readable line, for collecting across a fleet sweep.
-#
-# OS family is called out explicitly because DisplayVersion alone is ambiguous - "22H2" is both
-# Windows 10 22H2 (build 19045) and Windows 11 22H2 (build 22621), and only the build number
-# separates them. Counting Windows 10 machines is a direct cost question (they are past end of
-# support and on paid ESU), so it should not depend on reading build numbers by eye.
-$osFamily = if ([int]$cv.CurrentBuild -ge 22000) { 'win11' } else { 'win10-EOL' }
 Say ""
-Say ("RESULT|{0}|{1}|{2}|{3} {4}.{5}|{6}|issues={7}|mode={8}|v={9}" -f `
+Say ("RESULT|{0}|{1}|{2}|{3} {4}.{5}|{6}|win11={7}|issues={8}|mode={9}|v={10}" -f `
         $env:COMPUTERNAME, $mfr, $osFamily,
         $cv.DisplayVersion, $cv.CurrentBuild, $cv.UBR,
         $(if ($isDell) { "dcu=$dcuHealth" } else { 'dcu=n/a' }),
-        $issues.Count, $(if ($ReportOnly) { 'report' } else { 'repair' }), $ScriptVersion)
+        $win11, $issues.Count, $(if ($ReportOnly) { 'report' } else { 'repair' }), $ScriptVersion)
