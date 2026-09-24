@@ -242,8 +242,15 @@ if (-not $ReportOnly) {
 }
 
 # Single machine-readable line, for collecting across a fleet sweep.
+#
+# OS family is called out explicitly because DisplayVersion alone is ambiguous - "22H2" is both
+# Windows 10 22H2 (build 19045) and Windows 11 22H2 (build 22621), and only the build number
+# separates them. Counting Windows 10 machines is a direct cost question (they are past end of
+# support and on paid ESU), so it should not depend on reading build numbers by eye.
+$osFamily = if ([int]$cv.CurrentBuild -ge 22000) { 'win11' } else { 'win10-EOL' }
 Say ""
-Say ("RESULT|{0}|{1}|{2}|{3}|issues={4}|mode={5}" -f `
-        $env:COMPUTERNAME, $mfr, "$($cv.DisplayVersion) $($cv.CurrentBuild).$($cv.UBR)",
+Say ("RESULT|{0}|{1}|{2}|{3} {4}.{5}|{6}|issues={7}|mode={8}" -f `
+        $env:COMPUTERNAME, $mfr, $osFamily,
+        $cv.DisplayVersion, $cv.CurrentBuild, $cv.UBR,
         $(if ($isDell) { "dcu=$dcuHealth" } else { 'dcu=n/a' }),
         $issues.Count, $(if ($ReportOnly) { 'report' } else { 'repair' }))
