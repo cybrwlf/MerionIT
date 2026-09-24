@@ -64,9 +64,14 @@ $flags = [ordered]@{
     'CBS PackagesPending'    = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\PackagesPending'
     'WU RebootRequired'      = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
     'WU PostRebootReporting' = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\PostRebootReporting'
-    'Rename pending'         = 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName'
 }
 foreach ($k in $flags.Keys) { "{0,-24} {1}" -f $k, (Test-Path $flags[$k]) }
+
+# A pending rename is the two names DISAGREEING, not the key existing - ActiveComputerName is
+# always present, so a Test-Path on it reports True on every healthy machine.
+$nameNow  = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName').ComputerName
+$nameLive = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName').ComputerName
+"{0,-24} {1}" -f 'Rename pending', $(if ($nameNow -ne $nameLive) { "YES ($nameLive -> $nameNow)" } else { 'False' })
 
 $pfro = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -EA SilentlyContinue).PendingFileRenameOperations
 "{0,-24} {1}" -f 'PendingFileRenameOps', $(if ($pfro) { "$($pfro.Count) entries" } else { 'none' })
