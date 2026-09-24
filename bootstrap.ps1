@@ -65,7 +65,11 @@ $newFiles = @(Get-ChildItem -Path $extractedFolder.FullName -Recurse -File | For
 } | Where-Object {
     $rel = $_
     ($ExcludeFromSync -notcontains $rel) -and
-    (-not ($ExcludeFoldersFromSync | Where-Object { $rel -like "$_\*" }))
+    (-not ($ExcludeFoldersFromSync | Where-Object { $rel -like "$_\*" })) -and
+    # Any README.md, at any depth - they document the repo for whoever maintains it and serve no
+    # purpose on an endpoint. Matched by leaf name rather than path so a README added in a new
+    # subfolder later is excluded automatically instead of quietly shipping to every machine.
+    ([System.IO.Path]::GetFileName($rel) -ne 'README.md')
 })
 
 # Remove files that this repo used to ship but no longer does (renamed/deleted scripts from an
