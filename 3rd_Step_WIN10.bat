@@ -25,4 +25,8 @@ Start cmd.exe /c call powerconfig.cmd
 
 ping 127.0.0.1 -n 5 > nul
 
+rem Provisioning checks its own work - anything still wrong lands in Manual-Steps-Reminder.txt,
+rem which opens on the next line. See the note in 2nd_Step_WIN11.bat.
+powershell.exe -ExecutionPolicy UnRestricted -File tools\Repair-MerionWindowsUpdate.ps1 -AddToReminder
+
 notepad.exe "C:\MerionIT\Manual-Steps-Reminder.txt"

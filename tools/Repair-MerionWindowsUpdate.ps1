@@ -36,13 +36,34 @@
     Change nothing. Report current state and what would be changed. Use this for the fleet sweep -
     it answers "how many machines are affected" without touching any of them.
 
+.PARAMETER AddToReminder
+    Write any findings into C:\MerionIT\Manual-Steps-Reminder.txt, which opens in Notepad at the end
+    of 2nd_Step/3rd_Step. This is how provisioning checks its own work: the recurring failure across
+    this toolkit has been scripts reporting success without verifying it, and a machine should not
+    be able to leave IT with a broken update policy that nobody saw. Off by default so a fleet sweep
+    does not write to disk on every machine it measures.
+
 .EXAMPLE
     powershell.exe -ExecutionPolicy Unrestricted -File .\Repair-MerionWindowsUpdate.ps1 -ReportOnly
 
 .EXAMPLE
     powershell.exe -ExecutionPolicy Unrestricted -File .\Repair-MerionWindowsUpdate.ps1
 #>
-param([switch]$ReportOnly)
+param([switch]$ReportOnly, [switch]$AddToReminder)
+
+$ReminderPath = "C:\MerionIT\Manual-Steps-Reminder.txt"
+function Add-ReminderIfMissing {
+    param([string]$Line)
+    if (-not (Test-Path $ReminderPath)) { return }
+    if (Select-String -Path $ReminderPath -Pattern ([regex]::Escape($Line)) -Quiet) { return }
+    $content = @(Get-Content -Path $ReminderPath)
+    if ($content.Count -gt 0 -and $content[-1] -match '^=+$') {
+        $newContent = $content[0..($content.Count - 2)] + $Line + $content[-1]
+    } else {
+        $newContent = $content + $Line
+    }
+    Set-Content -Path $ReminderPath -Value $newContent
+}
 
 $wu     = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
 $au     = "$wu\AU"
@@ -192,6 +213,17 @@ Say ""
 Say "--- FINDINGS ---"
 if ($issues.Count -eq 0) { Say "  none - this machine was already correct" }
 else { $issues | ForEach-Object { Say "  * $_" } }
+
+# Surface anything still wrong to the technician. In repair mode most findings have just been
+# fixed, so only report what a human still has to act on - currently the DCU case, which this
+# script deliberately will not fix itself (that is tweaks\vendor-drivers.ps1's job).
+if ($AddToReminder) {
+    $needsHuman = $issues | Where-Object { $_ -match '^ACTION NEEDED' -or $ReportOnly }
+    foreach ($i in $needsHuman) {
+        Add-ReminderIfMissing "[ ] Windows Update check: $i"
+    }
+    if ($needsHuman) { Say "  (added $($needsHuman.Count) item(s) to Manual-Steps-Reminder.txt)" }
+}
 
 if (-not $ReportOnly) {
     Say ""
