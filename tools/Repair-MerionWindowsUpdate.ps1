@@ -121,17 +121,30 @@ foreach ($v in @(
 # ------------------------------------------ 3. driver offers, vendor-dependent
 $dcuCli    = "${env:ProgramFiles(x86)}\Dell\CommandUpdate\dcu-cli.exe"
 $dcuHealth = 'absent'
+$dcuOk     = $false
 if (Test-Path $dcuCli) {
-    # Presence is not health. A partial uninstall leaves the binary while removing Dell Core
-    # Services, and every dcu-cli call then returns 2.
-    & $dcuCli /configure -scheduleManual -silent 2>&1 | Out-Null
-    $dcuHealth = if ($LASTEXITCODE -eq 2) { 'BROKEN (exit 2)' } else { 'working' }
+    if ($ReportOnly) {
+        # -ReportOnly must not change anything, and `/configure` IS a write - it would set DCU's
+        # schedule on a machine we are only measuring. Fall back to the service state, which is
+        # the failure mode actually seen in the field (MRM8035-LT101, 2026-09-23): dcu-cli
+        # present and correct, DellClientManagementService Stopped/Disabled, every call exit 2.
+        $svc = Get-Service DellClientManagementService -ErrorAction SilentlyContinue
+        if (-not $svc)                    { $dcuHealth = 'present, service MISSING' }
+        elseif ($svc.Status -ne 'Running'){ $dcuHealth = "present, service $($svc.Status)/$($svc.StartType) - LIKELY BROKEN" }
+        else                              { $dcuHealth = 'present, service running (not probed - report mode)'; $dcuOk = $true }
+    }
+    else {
+        # Presence is not health. Only a real invocation proves dcu-cli works.
+        & $dcuCli /configure -scheduleManual -silent 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 2) { $dcuHealth = 'BROKEN (exit 2)' }
+        else                     { $dcuHealth = 'working'; $dcuOk = $true }
+    }
 }
 $haveExclude = (Get-ItemProperty $wu -Name ExcludeWUDriversInQualityUpdate -ErrorAction SilentlyContinue).ExcludeWUDriversInQualityUpdate
 
 if ($isDell) {
     Say "Dell : dcu-cli $dcuHealth"
-    if ($dcuHealth -eq 'working') {
+    if ($dcuOk) {
         if ($haveExclude -ne 1) {
             $issues.Add("WU is offering drivers on a Dell with working DCU - expect phantom driver updates and a false 'restart required'")
             if (-not $ReportOnly) {
