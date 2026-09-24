@@ -180,9 +180,25 @@ Write-Host "  dcu-cli: $((Get-Item $dcuCli).VersionInfo.ProductVersion)"
 # (see commit 82b7303) - dcu-cli.exe 5.7.2.7 present, every invocation exit 2.
 & $dcuCli /configure -scheduleManual -silent 2>&1 | Out-Null
 if ($LASTEXITCODE -eq 2) {
-    Write-Warning "  dcu-cli is present but non-functional (exit 2 - Dell Core Services missing)."
-    Write-Warning "  Repair: winget uninstall --id Dell.CommandUpdate, reboot, then reinstall."
-    Add-ReminderIfMissing "[ ] Dell Command Update is broken (dcu-cli exit 2) - uninstall it, reboot, reinstall, then rerun tweaks\vendor-drivers.ps1"
+    # Exit 2 is usually NOT a missing install. Confirmed on MRM8035-LT101 2026-09-23: Dell Core
+    # Services 1.14.151.0 was present and dcu-cli was 5.7.2.7, but DellClientManagementService -
+    # the service dcu-cli actually drives - had been left Stopped/Disabled, and every call
+    # returned 2. Re-enabling the service fixed it; a reinstall would have been wasted effort
+    # (and `winget uninstall` failed with 1604 anyway).
+    $svc = Get-Service DellClientManagementService -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -ne 'Running') {
+        Write-Host "  dcu-cli returned 2 - DellClientManagementService is $($svc.Status)/$($svc.StartType). Re-enabling..."
+        Set-Service DellClientManagementService -StartupType Automatic -ErrorAction SilentlyContinue
+        Start-Service DellClientManagementService -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 5
+        & $dcuCli /configure -scheduleManual -silent 2>&1 | Out-Null
+        Write-Host "    retry exit: $LASTEXITCODE"
+    }
+}
+if ($LASTEXITCODE -eq 2) {
+    Write-Warning "  dcu-cli is present but non-functional (exit 2)."
+    Write-Warning "  Check DellClientManagementService first; if that is running, reinstall DCU."
+    Add-ReminderIfMissing "[ ] Dell Command Update is broken (dcu-cli exit 2) - check DellClientManagementService is Running, else reinstall DCU, then rerun tweaks\vendor-drivers.ps1"
     Write-Host "======================================="
     return
 }
