@@ -70,10 +70,18 @@ $model        = (Get-CimInstance Win32_ComputerSystem).Model
 Write-Host "  Manufacturer : $manufacturer"
 Write-Host "  Model        : $model"
 
+$wuPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+
 if ($manufacturer -notmatch 'Dell') {
     Write-Host "  Not a Dell - Windows Update handles drivers on this machine."
     Write-Host "  (WU policy is set by basic10-11stuff.ps1: 7-day quality deferral, feature"
     Write-Host "   updates unmanaged.)"
+    # WU is the ONLY driver path here, so make sure nothing is suppressing driver offers -
+    # e.g. a machine that carried the value over from an older image.
+    if ((Get-ItemProperty $wuPolicy -Name ExcludeWUDriversInQualityUpdate -ErrorAction SilentlyContinue)) {
+        Remove-ItemProperty -Path $wuPolicy -Name ExcludeWUDriversInQualityUpdate -ErrorAction SilentlyContinue
+        Write-Host "  Cleared ExcludeWUDriversInQualityUpdate - WU must be free to offer drivers here."
+    }
     Write-Host "======================================="
     return
 }
@@ -178,6 +186,24 @@ if ($LASTEXITCODE -eq 2) {
     Write-Host "======================================="
     return
 }
+
+# --- DCU owns drivers on this machine, so stop Windows Update also offering them -------
+# Deliberately AFTER the health probe: if dcu-cli were broken and we had already suppressed WU
+# drivers, the machine would be left with no driver path at all.
+#
+# Why this is needed. Observed on MRM8035-LT101 2026-09-23: with WU free to offer drivers, it
+# advertised 18 driver packages that could never install - seven superseded Intel graphics
+# extensions (31.0.101.3959 through 32.0.101.6881, against 32.0.101.7088 installed), a Realtek
+# package identical to what was already present, and HP printer drivers for devices whose PnP
+# status was Unknown. Windows will not downgrade a driver or install one for absent hardware, so
+# they sat in the pending list permanently while the UI kept asking for a restart that no
+# pending-reboot flag agreed with. Rebooting cannot fix it; the update store is not corrupt.
+#
+# That machine had this value set before provisioning, and basic10-11stuff.ps1 deletes the whole
+# WindowsUpdate key before writing its own values - which is what let the noise loose.
+Write-Host "  Suppressing Windows Update driver offers (DCU owns drivers on Dell)..."
+Set-ItemProperty -Path $wuPolicy -Name ExcludeWUDriversInQualityUpdate -Type DWord -Value 1 -ErrorAction SilentlyContinue
+Restart-Service wuauserv -ErrorAction SilentlyContinue
 
 # --- tame it ------------------------------------------------------------------------
 # Applied one switch per call deliberately. Batched into a single call, DCU fails the whole lot
