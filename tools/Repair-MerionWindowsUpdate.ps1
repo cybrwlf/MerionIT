@@ -58,19 +58,55 @@
     be able to leave IT with a broken update policy that nobody saw. Off by default so a fleet sweep
     does not write to disk on every machine it measures.
 
+.PARAMETER FixDrivers
+    Dell only, and INSTALLS SOFTWARE. Off by default on purpose.
+
+    Without this, a Dell with no working Dell Command Update gets its Windows Update policy
+    repaired correctly and still looks broken to whoever is using it: updates enabled, nothing
+    installing, a driver list that re-offers itself forever. MRQ7582-LT301 on 2026-09-30 was the
+    proof - 0 software updates outstanding and 33 driver offers, 10 of which downloaded and never
+    installed (31x event 44, 21x event 43). Repairing the policy and stopping is half a job.
+
+    The reason it cannot be the default is that fixing it means running tweaks\vendor-drivers.ps1,
+    which does considerably more than install DCU: it removes SupportAssist, configures DCU, and
+    then runs `dcu-cli /applyUpdates`, which applies driver AND firmware updates including BIOS.
+    That must never happen just because somebody ran a script called "repair Windows Update".
+
+    So: sweep with -ReportOnly to find them (dcu= in the RESULT line), then come back and run this
+    deliberately on the ones that need it. Ignored when -ReportOnly is set.
+
 .EXAMPLE
     powershell.exe -ExecutionPolicy Unrestricted -File .\Repair-MerionWindowsUpdate.ps1 -ReportOnly
 
 .EXAMPLE
     powershell.exe -ExecutionPolicy Unrestricted -File .\Repair-MerionWindowsUpdate.ps1
+
+.EXAMPLE
+    powershell.exe -ExecutionPolicy Unrestricted -File .\Repair-MerionWindowsUpdate.ps1 -FixDrivers
 #>
-param([switch]$ReportOnly, [switch]$AddToReminder)
+param(
+    [switch]$ReportOnly,
+    [switch]$AddToReminder,
+    [switch]$FixDrivers,
+    # Passed straight through to vendor-drivers.ps1 when -FixDrivers is set. Needed on any machine
+    # that has no C:\MerionIT\apps, which is every machine reached over Kaseya. There is no default
+    # because Dell 403s scripted requests, so a URL cannot be derived at runtime.
+    [string]$DcuInstallerUrl,
+    [string]$DcuInstallerSha256
+)
 
 # Bump this on every change that alters output or behaviour. It is echoed in the RESULT line so a
 # fleet sweep can prove which version produced a given result - raw.githubusercontent.com caches
 # for several minutes, and a stale copy on one endpoint otherwise looks like a real difference
 # between machines. Cost us a confused round trip on 2026-09-23.
-$ScriptVersion = '2026-09-30.1'
+$ScriptVersion = '2026-09-30.2'
+
+# -ReportOnly wins. A sweep must never install software because someone added a flag they did not
+# think about, and silently ignoring the combination would be worse than saying so.
+if ($FixDrivers -and $ReportOnly) {
+    Write-Output "NOTE: -FixDrivers ignored because -ReportOnly is set. Nothing will be installed."
+    $FixDrivers = $false
+}
 
 $ReminderPath = "C:\MerionIT\Manual-Steps-Reminder.txt"
 function Add-ReminderIfMissing {
@@ -206,8 +242,60 @@ if ($isDell) {
             }
         } else { Say "OK   ExcludeWUDriversInQualityUpdate = 1" }
     }
+    elseif ($FixDrivers -and -not $ReportOnly) {
+        # Fetch vendor-drivers.ps1 the same way this script is itself fetched. It is self-contained
+        # - no dot-sourcing, no modules, no $PSScriptRoot - and falls back to
+        # `winget install --id Dell.CommandUpdate` when C:\MerionIT\apps has no installer, which is
+        # always the case on a machine reached over Kaseya rather than from the build USB.
+        Say "Dell : dcu-cli $dcuHealth  -> -FixDrivers set, installing"
+        $vdUrl = 'https://raw.githubusercontent.com/cybrwlf/MerionIT/master/tweaks/vendor-drivers.ps1'
+        $vdPath = Join-Path $env:TEMP 'vendor-drivers.ps1'
+        $ok = $false
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            New-Item -ItemType Directory -Force -Path 'C:\MerionIT' | Out-Null
+            Invoke-WebRequest $vdUrl -OutFile $vdPath -UseBasicParsing -ErrorAction Stop
+            Say "  downloaded vendor-drivers.ps1 ($((Get-Item $vdPath).Length) bytes), running it..."
+            # No -ApplyUpdates: install and configure DCU, do not flash firmware as a side effect
+            # of repairing Windows Update. -DcuInstallerUrl/-Sha256 pass through only if given.
+            $vdArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$vdPath)
+            if ($DcuInstallerUrl)    { $vdArgs += @('-DcuInstallerUrl',    $DcuInstallerUrl) }
+            if ($DcuInstallerSha256) { $vdArgs += @('-DcuInstallerSha256', $DcuInstallerSha256) }
+            & powershell.exe @vdArgs 2>&1 | ForEach-Object { Say "    $_" }
+            $ok = $true
+        } catch {
+            $issues.Add("ACTION NEEDED: -FixDrivers could not run vendor-drivers.ps1: $($_.Exception.Message)")
+        }
+
+        # Presence is not health, same rule as everywhere else in this script. Re-probe rather than
+        # assuming the install worked, then set the policy only if dcu-cli actually answers.
+        if ($ok -and (Test-Path $dcuCli)) {
+            & $dcuCli /configure -scheduleManual -silent 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 2) {
+                $dcuHealth = 'BROKEN after install (exit 2)'
+                $issues.Add("ACTION NEEDED: DCU installed but dcu-cli still returns 2 - leaving Windows Update free to offer drivers")
+            } else {
+                $dcuHealth = 'installed by -FixDrivers'
+                $dcuOk = $true
+                $acted.Add("installed Dell Command Update via vendor-drivers.ps1")
+                Set-ItemProperty $wu -Name ExcludeWUDriversInQualityUpdate -Type DWord -Value 1
+                $acted.Add("set ExcludeWUDriversInQualityUpdate=1 (DCU now owns drivers)")
+                Say "  DCU healthy - WU driver offers suppressed"
+                Say "  NOTE: verify in the Settings UI, not with IUpdateSearcher. Search() queries the"
+                Say "        catalog directly and does NOT reflect WUfB policy filtering, so the count"
+                Say "        will not drop even when the policy is working."
+            }
+        } elseif ($ok) {
+            $dcuHealth = 'install produced no dcu-cli'
+            $issues.Add("ACTION NEEDED: vendor-drivers.ps1 ran but $dcuCli still does not exist")
+        }
+        if (-not $dcuOk -and $haveExclude -eq 1) {
+            Remove-ItemProperty $wu -Name ExcludeWUDriversInQualityUpdate -ErrorAction SilentlyContinue
+            $acted.Add("cleared ExcludeWUDriversInQualityUpdate - DCU still not working, WU must stay available")
+        }
+    }
     else {
-        $issues.Add("ACTION NEEDED: Dell Command Update is $dcuHealth - this machine has no OEM driver path. Leaving Windows Update free to offer drivers until DCU is fixed. Run tweaks\vendor-drivers.ps1.")
+        $issues.Add("ACTION NEEDED: Dell Command Update is $dcuHealth - this machine has no OEM driver path. Leaving Windows Update free to offer drivers until DCU is fixed. Re-run this script with -FixDrivers, or run tweaks\vendor-drivers.ps1 by hand.")
         if ($haveExclude -eq 1 -and -not $ReportOnly) {
             Remove-ItemProperty $wu -Name ExcludeWUDriversInQualityUpdate -ErrorAction SilentlyContinue
             $acted.Add("cleared ExcludeWUDriversInQualityUpdate - DCU is not working, WU must stay available")
@@ -425,4 +513,4 @@ Say ("RESULT|{0}|{1}|{2}|{3} {4}.{5}|{6}|win11={7}|pin={8}|issues={9}|mode={10}|
         $cv.DisplayVersion, $cv.CurrentBuild, $cv.UBR,
         $(if ($isDell) { "dcu=$dcuHealth" } else { 'dcu=n/a' }),
         $win11, $(if ($pinCleared) { "$pinInfo-cleared" } elseif ($pinInfo) { $pinInfo } else { 'none' }),
-        $issues.Count, $(if ($ReportOnly) { 'report' } else { 'repair' }), $ScriptVersion)
+        $issues.Count, $(if ($ReportOnly) { 'report' } elseif ($FixDrivers) { 'repair+drivers' } else { 'repair' }), $ScriptVersion)

@@ -47,6 +47,27 @@ WHAT DELL COSTS YOU, so this is a decision and not a surprise:
   up to date.
 #>
 
+param(
+    # Where to get the DCU installer when C:\MerionIT\apps has no copy, which is every machine
+    # reached remotely rather than from the build USB. There is no default on purpose: dl.dell.com
+    # 403s scripted requests and Dell's driver pages 403/404 them too, so a working URL cannot be
+    # derived at runtime and guessing one would be worse than asking. Point this at wherever Merion
+    # hosts the installer.
+    [string]$DcuInstallerUrl,
+
+    # Expected SHA-256 of whatever $DcuInstallerUrl serves. The download is REFUSED if it does not
+    # match, and refused if this is omitted. A 90 MB executable pulled over the network and run
+    # elevated is exactly the thing that gets verified before it runs, not after.
+    # 5.7.2 A00 (WYJ59): 5C20E1A352FDBC0A9759504DB37C7B8C694F4024F5F5313C5130C0959BE8D484
+    [string]$DcuInstallerSha256,
+
+    # Run `dcu-cli /applyUpdates` at the end, which applies driver AND firmware updates including
+    # BIOS. OFF by default as of 2026-09-30. It used to be unconditional, which meant a fleet-wide
+    # driver sweep also flashed BIOS on every Dell unattended. Installing and configuring DCU is a
+    # safe thing to do everywhere; applying firmware is a decision per machine.
+    [switch]$ApplyUpdates
+)
+
 Write-Host "======================================="
 Write-Host "Vendor driver handling..."
 Write-Host "======================================="
@@ -90,9 +111,15 @@ if ($manufacturer -notmatch 'Dell') {
 # Dell path
 # ---------------------------------------------------------------------------------
 
-# SupportAssist is the nagware - the thing that actually interrupts users. DCU is not, once
-# configured below. Removing SupportAssist also takes Dell Client Management Service, Dell TechHub
-# and Dell SupportAssist service with it (verified 2026-09-22); DCU reinstalls what it needs.
+# ORDER MATTERS, and it used to be wrong. SupportAssist was removed FIRST, then DCU installed.
+# When the install failed the machine was left with neither - no nagware, but also no driver tooling
+# at all. That happened for real on MRQ7582-LT301 on 2026-09-30: SupportAssist uninstalled cleanly,
+# winget then failed 0x8A15000F, and the machine ended up worse than before the script ran.
+#
+# So DCU is installed and proven working first. SupportAssist removal is further down, and only
+# runs once dcu-cli answers. A machine that keeps its nagware is a nuisance; a machine with no
+# driver path is a problem.
+function Remove-DellSupportAssist {
 Write-Host "  Removing Dell SupportAssist (the consumer nagware)..."
 $saAppx = Get-AppxPackage -AllUsers -Name "*DellSupportAssist*" -ErrorAction SilentlyContinue
 if ($saAppx) {
@@ -115,6 +142,7 @@ $saMsi = Get-ItemProperty $uninstallKeys -ErrorAction SilentlyContinue |
 if ($saMsi) {
     $p = Start-Process msiexec.exe -ArgumentList @('/x', $saMsi.PSChildName, '/qn', '/norestart') -Wait -PassThru
     Write-Host "    msi uninstall exit: $($p.ExitCode)   (0 or 3010 = success)"
+}
 }
 
 # --- Dell Command Update -----------------------------------------------------------
@@ -147,21 +175,62 @@ if (-not (Test-Path $dcuCli)) {
         Write-Host "    installer exit: $($p.ExitCode)"
         Start-Sleep -Seconds 10
     }
-    else {
-        # No USB. Remote machines (Kaseya-only, no way to hand-carry the installer) are the normal
-        # case for this, so fall back to winget rather than giving up. Dell.CommandUpdate is the
-        # Classic build and lands in the same ProgramFiles(x86) path checked above. It trails the
-        # dell.com release slightly (5.7.0 vs 5.7.2 on 2026-09-23), which is fine - the /configure
-        # switches below are identical across 5.7.x.
-        Write-Host "  No installer in C:\MerionIT\apps - trying winget..."
-        if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
-            & winget.exe install --id Dell.CommandUpdate -e --silent `
-                --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
-            Write-Host "    winget exit: $LASTEXITCODE"
-            Start-Sleep -Seconds 10
-        } else {
-            Write-Warning "  winget not available either."
+    elseif ($DcuInstallerUrl) {
+        # Download + verify. Replaces the winget fallback, which was removed 2026-09-30 - see the
+        # note below for why it could never have worked on the machines that need this most.
+        Write-Host "  No installer in C:\MerionIT\apps - downloading..."
+        $tmp = Join-Path $env:TEMP 'Dell-Command-Update-download.EXE'
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            # dl.dell.com 403s the default PowerShell user agent, so send a browser one. Harmless
+            # against any other host.
+            Invoke-WebRequest $DcuInstallerUrl -OutFile $tmp -UseBasicParsing -ErrorAction Stop `
+                -UserAgent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36'
+            Write-Host "    downloaded $('{0:N0}' -f (Get-Item $tmp).Length) bytes"
+
+            $hash = (Get-FileHash $tmp -Algorithm SHA256).Hash
+            if (-not $DcuInstallerSha256) {
+                Write-Warning "    REFUSING to run it: no -DcuInstallerSha256 given. Actual hash was $hash"
+                Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+            }
+            elseif ($hash -ne $DcuInstallerSha256.Replace('-','').Trim().ToUpper()) {
+                Write-Warning "    REFUSING to run it: SHA-256 mismatch."
+                Write-Warning "      expected $($DcuInstallerSha256.ToUpper())"
+                Write-Warning "      got      $hash"
+                Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+            }
+            else {
+                Write-Host "    SHA-256 matches"
+                $sig = Get-AuthenticodeSignature $tmp
+                Write-Host "    signature: $($sig.Status)  signer: $($sig.SignerCertificate.Subject)"
+                if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Dell') {
+                    Write-Warning "    REFUSING to run it: not a valid Dell signature."
+                    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+                } else {
+                    Write-Host "  Installing (silent, 5-7 min)..."
+                    $p = Start-Process $tmp -ArgumentList @('/s') -Wait -PassThru
+                    Write-Host "    installer exit: $($p.ExitCode)"
+                    Start-Sleep -Seconds 10
+                    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+                }
+            }
+        } catch {
+            Write-Warning "  download failed: $($_.Exception.Message)"
         }
+    }
+    else {
+        # winget was the fallback here until 2026-09-30. It was removed rather than fixed, because
+        # it cannot work in the case it exists for. winget.exe is a PER-USER MSIX execution alias
+        # living in %LOCALAPPDATA%\Microsoft\WindowsApps. There is no such path for SYSTEM, and
+        # every remote run (Kaseya) is SYSTEM. It also failed 0x8A15000F on MRQ7582-LT301 when run
+        # as a real elevated user, on a machine whose winget sources had not been touched since
+        # 2023. Two independent reasons, so no amount of flag-tuning saves it.
+        $isSystem = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value -eq 'S-1-5-18'
+        Write-Warning "  No installer in C:\MerionIT\apps and no -DcuInstallerUrl given."
+        Write-Host    "    Running as SYSTEM : $isSystem"
+        Write-Host    "    Supply -DcuInstallerUrl and -DcuInstallerSha256, or stage the installer"
+        Write-Host    "    into C:\MerionIT\apps first."
+        Add-ReminderIfMissing "[ ] Dell Command Update not installed - no installer available. Stage it in C:\MerionIT\apps or pass -DcuInstallerUrl."
     }
 
     if (-not (Test-Path $dcuCli)) {
@@ -172,6 +241,10 @@ if (-not (Test-Path $dcuCli)) {
     }
 }
 Write-Host "  dcu-cli: $((Get-Item $dcuCli).VersionInfo.ProductVersion)"
+
+# DCU exists and this machine now has a driver path, so the nagware can go. Deliberately after the
+# install, never before - see the note above Remove-DellSupportAssist.
+Remove-DellSupportAssist
 
 # Health probe. Test-Path on dcu-cli.exe is NOT sufficient: a partial uninstall leaves the binary
 # on disk while removing Dell Core Services, and every dcu-cli call then returns 2. The presence
@@ -247,6 +320,14 @@ foreach ($s in $dcuSettings) {
 #       alarm on every healthy machine.
 #   1   reboot required
 #   2   fatal error (seen when Dell Core Services is missing)
+if (-not $ApplyUpdates) {
+    Write-Host "  DCU installed and configured. NOT applying updates (-ApplyUpdates not given)."
+    Write-Host "  Re-run with -ApplyUpdates to actually install drivers and firmware on this machine."
+    Add-ReminderIfMissing "[ ] Run tweaks\vendor-drivers.ps1 -ApplyUpdates to install Dell drivers/firmware"
+    Write-Host "======================================="
+    return
+}
+
 Write-Host "  Scanning and applying Dell updates (this can take a while)..."
 & $dcuCli /applyUpdates -reboot=disable -outputLog=C:\MerionIT\dcu-apply.log 2>&1 |
     Where-Object { $_ -notmatch 'Downloading updates \(' } |
