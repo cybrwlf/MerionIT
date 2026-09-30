@@ -119,6 +119,11 @@ if ($manufacturer -notmatch 'Dell') {
 # So DCU is installed and proven working first. SupportAssist removal is further down, and only
 # runs once dcu-cli answers. A machine that keeps its nagware is a nuisance; a machine with no
 # driver path is a problem.
+# Script scope on purpose: both Remove-DellSupportAssist and the orphaned-Core-Services check
+# below read it, and a copy inside the function would not be visible to the latter.
+$uninstallKeys = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+
 function Remove-DellSupportAssist {
 Write-Host "  Removing Dell SupportAssist (the consumer nagware)..."
 $saAppx = Get-AppxPackage -AllUsers -Name "*DellSupportAssist*" -ErrorAction SilentlyContinue
@@ -135,8 +140,6 @@ if ($saAppx) {
     $stillThere = Get-AppxPackage -AllUsers -Name "*DellSupportAssist*" -ErrorAction SilentlyContinue
     Write-Host "    appx: $(if ($stillThere) { 'STILL PRESENT' } else { 'removed' })"
 }
-$uninstallKeys = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
-                 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
 $saMsi = Get-ItemProperty $uninstallKeys -ErrorAction SilentlyContinue |
          Where-Object { $_.DisplayName -eq 'Dell SupportAssist' } | Select-Object -First 1
 if ($saMsi) {
@@ -162,6 +165,36 @@ if (-not (Test-Path $dcuCli)) {
         Add-ReminderIfMissing "[ ] Install .NET Desktop Runtime 10.0.8+ then rerun tweaks\vendor-drivers.ps1 (Dell Command Update needs it)"
         Write-Host "======================================="
         return
+    }
+
+    # ---- orphaned Dell Core Services blocks the install -------------------------------------
+    # The old debloat uninstalled Dell Command Update but left Dell Core Services behind. DCU 5.7.2
+    # bundles Core Services 1.15.18.0 under a DIFFERENT ProductCode, so it is not a clean MSI major
+    # upgrade: it tries to remove the old one, fails with 1603, rolls the whole thing back, and the
+    # DUP reports DEP_HARD_ERROR / exit 4. The log line that gives it away is
+    #     Product: Dell Core Services -- Installation operation failed ... error status: 1603
+    #
+    # Proven on MRQ7582-LT301 2026-09-30: with orphaned Core Services 1.0.248.0 present the install
+    # failed exit 4 twice; removing it first made the same installer succeed exit 0, leaving
+    # dcu-cli 5.7.2.7 and Core Services 1.15.18.0. Every Dell built on the old flow carries this.
+    #
+    # Only removed when DCU is absent. If dcu-cli exists we never reach here, so a working pair is
+    # never touched.
+    $orphan = Get-ItemProperty $uninstallKeys -ErrorAction SilentlyContinue |
+              Where-Object { $_.DisplayName -eq 'Dell Core Services' } | Select-Object -First 1
+    if ($orphan) {
+        Write-Host "  Dell Core Services $($orphan.DisplayVersion) present without DCU - orphaned by the"
+        Write-Host "  old debloat, and it will fail the DCU install (1603). Removing it first..."
+        $p = Start-Process msiexec.exe -ArgumentList @('/x', $orphan.PSChildName, '/qn', '/norestart') -Wait -PassThru
+        Write-Host "    uninstall exit: $($p.ExitCode)   (0 or 3010 = success)"
+        Start-Sleep -Seconds 5
+        $still = Get-ItemProperty $uninstallKeys -ErrorAction SilentlyContinue |
+                 Where-Object { $_.DisplayName -eq 'Dell Core Services' }
+        if ($still) {
+            Write-Warning "    Core Services still present - the DCU install will probably fail with exit 4."
+        } else {
+            Write-Host "    removed (DellTechHub and DellClientManagementService go with it; DCU reinstalls both)"
+        }
     }
 
     # Staged on the USB rather than committed - the installer is ~86 MB. Downloading it here is
