@@ -15,9 +15,17 @@
        property. Every machine provisioned with that script carries the same two values.
 
     2. THE "MANAGED BY YOUR ORGANIZATION" BANNER.
-       Comes from NoAutoRebootWithLoggedOnUsers under the same AU key - NOT from the deferral
-       values, which is what we assumed for a long time. Removing the AU key removes the banner
-       and keeps the deferral.
+       NoAutoRebootWithLoggedOnUsers under the AU key is one source, and removing the AU key
+       removes that one.
+
+       CORRECTED 2026-09-30: it is not the ONLY source, and the banner does NOT go away after a
+       repair. Windows shows it whenever ANY Windows Update policy is configured, which after a
+       successful repair still includes the two values this script deliberately sets,
+       DeferQualityUpdatesPeriodInDays and BranchReadinessLevel. Verified on MRQ7582-LT301:
+       AU subkey gone, pin gone, updates flowing, banner still there.
+
+       So the banner is expected on a correctly repaired machine and is not a symptom. Do not
+       chase it, and do not remove the deferral values to make it disappear.
 
     3. PINNED TO WINDOWS 10 22H2, PERMANENTLY.
        Provisioning also wrote TargetReleaseVersion=1 and TargetReleaseVersionInfo=22H2. 22H2 is
