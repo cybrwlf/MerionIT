@@ -19,7 +19,14 @@
        values, which is what we assumed for a long time. Removing the AU key removes the banner
        and keeps the deferral.
 
-    3. WINDOWS UPDATE OFFERING DRIVERS IT CAN NEVER INSTALL.
+    3. PINNED TO WINDOWS 10 22H2, PERMANENTLY.
+       Provisioning also wrote TargetReleaseVersion=1 and TargetReleaseVersionInfo=22H2. 22H2 is
+       the LAST Windows 10 release, so that is not a deferral, it is a permanent block on ever
+       being offered Windows 11. Found on MRQ7582-LT301 on 2026-09-30: TPM 2.0, Secure Boot, GPT,
+       gen 11 CPU, 207 GB free, and still un-upgradeable. Repairing Windows Update without
+       clearing this gets a machine that patches happily and never moves off Windows 10.
+
+    4. WINDOWS UPDATE OFFERING DRIVERS IT CAN NEVER INSTALL.
        See tools\Diag-WindowsUpdate.ps1 and the MRM8035-LT101 findings. On Dell, DCU owns drivers,
        so WU driver offers are noise - superseded versions and drivers for absent hardware that
        pile up in the pending list and produce a permanent, false "restart required". On every
@@ -55,7 +62,7 @@ param([switch]$ReportOnly, [switch]$AddToReminder)
 # fleet sweep can prove which version produced a given result - raw.githubusercontent.com caches
 # for several minutes, and a stale copy on one endpoint otherwise looks like a real difference
 # between machines. Cost us a confused round trip on 2026-09-23.
-$ScriptVersion = '2026-09-23.5'
+$ScriptVersion = '2026-09-30.1'
 
 $ReminderPath = "C:\MerionIT\Manual-Steps-Reminder.txt"
 function Add-ReminderIfMissing {
@@ -314,6 +321,68 @@ if ($osFamily -eq 'win10-EOL') {
     Say "Verdict     : $win11"
 }
 
+
+# --------------------------------------- 6. the feature-update pin (blocks Windows 11)
+# Added 2026-09-30 after MRQ7582-LT301. That machine had everything else right for Windows 11
+# (TPM 2.0, Secure Boot, GPT, gen 11 CPU, 207 GB free) and would still never have been offered
+# it, because provisioning also wrote:
+#
+#     TargetReleaseVersion     = 1
+#     TargetReleaseVersionInfo = 22H2
+#
+# 22H2 is the LAST Windows 10 release, so pinning to it is a permanent block, not a deferral.
+# Until this section existed the script repaired Windows Update, reported six findings, and
+# never mentioned the one value that made the whole fleet un-upgradeable. Report mode says so;
+# repair mode clears it.
+#
+# Only a Windows 10 pin is removed. A pin on a machine already running Windows 11 is someone
+# deliberately holding a version and is left alone.
+Say ""
+Say "--- FEATURE UPDATE PIN ---"
+$pinVer  = (Get-ItemProperty $wu -Name TargetReleaseVersion     -ErrorAction SilentlyContinue).TargetReleaseVersion
+$pinInfo = (Get-ItemProperty $wu -Name TargetReleaseVersionInfo -ErrorAction SilentlyContinue).TargetReleaseVersionInfo
+$deferF  = (Get-ItemProperty $wu -Name DeferFeatureUpdatesPeriodInDays -ErrorAction SilentlyContinue).DeferFeatureUpdatesPeriodInDays
+
+Say "TargetReleaseVersion            : $(if ($null -eq $pinVer)  { 'not set' } else { $pinVer })"
+Say "TargetReleaseVersionInfo        : $(if ($null -eq $pinInfo) { 'not set' } else { $pinInfo })"
+Say "DeferFeatureUpdatesPeriodInDays : $(if ($null -eq $deferF)  { 'not set' } else { $deferF })"
+
+# Windows 10 release names. 22H2 is terminal - there is no later Windows 10 to move to.
+$win10Releases = @('1507','1511','1607','1703','1709','1803','1809','1903','1909','2004','20H2','21H1','21H2','22H2')
+$pinIsWin10 = ($pinInfo -and ($win10Releases -contains [string]$pinInfo))
+$pinCleared = $false
+
+if ($pinIsWin10 -and $osFamily -ne 'win11') {
+    if ($win11 -eq 'ready') {
+        $issues.Add("BLOCKING WIN11: pinned to Windows 10 $pinInfo (TargetReleaseVersion=1) on a machine that is otherwise Win11-ready - Windows Update will never offer the upgrade while this is set")
+    } else {
+        $issues.Add("pinned to Windows 10 $pinInfo (TargetReleaseVersion=1) - $pinInfo is the last Windows 10 release, so this pin only blocks, it defers nothing")
+    }
+    if (-not $ReportOnly) {
+        Remove-ItemProperty $wu -Name TargetReleaseVersion     -ErrorAction SilentlyContinue
+        Remove-ItemProperty $wu -Name TargetReleaseVersionInfo -ErrorAction SilentlyContinue
+        $acted.Add("removed the Windows 10 $pinInfo feature-update pin")
+        $pinCleared = $true
+        Say "  -> removed"
+    } else {
+        Say "  -> would remove (report mode)"
+    }
+} elseif ($pinInfo) {
+    Say "OK   pinned to $pinInfo, left alone (not a Windows 10 release, or this machine is already Win11)"
+} else {
+    Say "OK   no feature-update pin"
+}
+
+# A feature deferral is a delay rather than a block, but provisioning had no reason to set one
+# and it pushes the upgrade out by up to a year.
+if ($deferF -and [int]$deferF -gt 0) {
+    $issues.Add("DeferFeatureUpdatesPeriodInDays=$deferF - delays the Windows 11 offer by that many days")
+    if (-not $ReportOnly) {
+        Remove-ItemProperty $wu -Name DeferFeatureUpdatesPeriodInDays -ErrorAction SilentlyContinue
+        $acted.Add("removed DeferFeatureUpdatesPeriodInDays=$deferF")
+    }
+}
+
 Say ""
 Say "--- FINDINGS ---"
 if ($issues.Count -eq 0) { Say "  none - this machine was already correct" }
@@ -343,8 +412,9 @@ if (-not $ReportOnly) {
 
 # Single machine-readable line, for collecting across a fleet sweep.
 Say ""
-Say ("RESULT|{0}|{1}|{2}|{3} {4}.{5}|{6}|win11={7}|issues={8}|mode={9}|v={10}" -f `
+Say ("RESULT|{0}|{1}|{2}|{3} {4}.{5}|{6}|win11={7}|pin={8}|issues={9}|mode={10}|v={11}" -f `
         $env:COMPUTERNAME, $mfr, $osFamily,
         $cv.DisplayVersion, $cv.CurrentBuild, $cv.UBR,
         $(if ($isDell) { "dcu=$dcuHealth" } else { 'dcu=n/a' }),
-        $win11, $issues.Count, $(if ($ReportOnly) { 'report' } else { 'repair' }), $ScriptVersion)
+        $win11, $(if ($pinCleared) { "$pinInfo-cleared" } elseif ($pinInfo) { $pinInfo } else { 'none' }),
+        $issues.Count, $(if ($ReportOnly) { 'report' } else { 'repair' }), $ScriptVersion)
