@@ -14,7 +14,7 @@ the account is being created fresh or already existed). Per-company behavior:
     DefaultMRPaccounts.ps1 (uncomment when MRP starts needing individual named accounts).
 #>
 param(
-    [Parameter(Mandatory = $true)]
+    # Optional: with no company, only pcsadmin is created (every company gets it).
     [ValidateSet('MRM', 'MRQ', 'MRP')]
     [string]$Company,
 
@@ -98,4 +98,8 @@ switch ($Company) {
     }
 }
 
-Write-Host "Finished Setup Default $Company Accounts"
+if ($Company) {
+    Write-Host "Finished Setup Default $Company Accounts"
+} else {
+    Write-Host "No company given - created pcsadmin only."
+}

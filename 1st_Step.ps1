@@ -102,6 +102,12 @@ if (Test-Path "$MerionITRoot\updatePCtime.bat") {
 $computerName = $env:COMPUTERNAME
 $prefix = $computerName.Substring(0, [Math]::Min(3, $computerName.Length))
 
+# A machine already carrying one of our prefixes has been named. ANYTHING else (DESKTOP-xxxx,
+# LAPTOP-xxxx, Computer-1234, a vendor/OEM name, a typo) is treated as a factory name and gets
+# renamed. MIT is listed only so a loaner already named by RenamePC.ps1 -Company MIT isn't
+# renamed again; Select-Company below has no MIT option.
+$namedPrefixes = @('MRM', 'MRQ', 'MRP', 'MIT')
+
 function Select-Company {
     Write-Host ""
     Write-Host "Select company"
@@ -119,19 +125,19 @@ function Select-Company {
 
 # This has to stay ahead of the .setup-complete block below: that block scrubs RenamePC.ps1 off
 # disk the moment it runs, so a rename attempted after it would find the script already gone.
-if ($prefix -ieq "DES" -or $ForceRename) {
+if ($namedPrefixes -notcontains $prefix -or $ForceRename) {
     if ($ForceRename) {
         Write-Host "-ForceRename specified - renaming '$computerName' even though it isn't a factory name..."
     } else {
-        Write-Host "Computer name starts with 'DES' - renaming PC..."
+        Write-Host "Computer name '$computerName' isn't an MRM/MRQ/MRP name - renaming PC..."
     }
 
     if ($Company) {
-        $company = $Company
+        $renameCompany = $Company
     } elseif ($Unattended) {
         throw "-Unattended needs -Company as well - there's no console here to answer the company prompt."
     } else {
-        $company = Select-Company
+        $renameCompany = Select-Company
     }
 
     # Only forward the parameters actually supplied, so RenamePC.ps1 falls back to its own
@@ -143,7 +149,7 @@ if ($prefix -ieq "DES" -or $ForceRename) {
     if ($Unattended) { $renameArgs['Force'] = $true }
     if ($NoReboot) { $renameArgs['NoReboot'] = $true }
 
-    & "$MerionITRoot\RenamePC.ps1" -Company $company @renameArgs
+    & "$MerionITRoot\RenamePC.ps1" -Company $renameCompany @renameArgs
     # RenamePC.ps1 reboots the machine (rename requires it) - nothing more to do this session.
     return
 }
@@ -169,49 +175,52 @@ if (Test-Path $CompletionMarker) {
 
 # Company is already known from the computer name itself (set during the rename step above) -
 # no need to ask again.
-$company = switch -Regex ($prefix) {
+# NOT named $company: PowerShell variables are case-insensitive, so that would be the [Company]
+# parameter above, and its ValidateSet rejects the $null a non-matching prefix produces.
+$accountCompany = switch -Regex ($prefix) {
     '^MRM$' { 'MRM' }
     '^MRQ$' { 'MRQ' }
     '^MRP$' { 'MRP' }
     default { $null }
 }
 
-if ($Company) { $company = $Company }
+if ($Company) { $accountCompany = $Company }
 
-if ($company) {
-    Write-Host "Computer name starts with '$prefix' - setting up default $company accounts..."
-    $accountArgs = @{}
+# pcsadmin is created on every run regardless of company. With no company resolved (MIT, or a name
+# that still isn't ours) DefaultAccounts.ps1 is called without -Company and does pcsadmin only.
+$accountArgs = @{}
+if ($accountCompany) {
+    Write-Host "Computer name starts with '$prefix' - setting up default $accountCompany accounts..."
+    $accountArgs['Company'] = $accountCompany
     if ($PSBoundParameters.ContainsKey('UserName')) { $accountArgs['UserName'] = $UserName }
     if ($PSBoundParameters.ContainsKey('PropertyCode')) { $accountArgs['PropertyCode'] = $PropertyCode }
 
-    if ($Unattended) {
-        # -Unattended has to mean "never prompt". Both of DefaultAccounts.ps1's remaining
-        # Read-Host calls are reachable from here, so supply an answer for each rather than
-        # letting the run hang on a console nobody is watching.
-        if (-not $accountArgs.ContainsKey('UserName')) {
-            # Skipping is the safe default: it creates nothing. Add the named account afterwards
-            # with SingleUser.ps1, which survives the end-of-run cleanup precisely for this.
-            Write-Host "-Unattended with no -UserName - skipping named user account creation. Use SingleUser.ps1 to add it later."
-            $accountArgs['UserName'] = ''
-        }
-        if ($company -eq 'MRM' -and -not $accountArgs.ContainsKey('PropertyCode')) {
-            # The property code is the 4 digits already in the computer name - that's where it
-            # came from when the machine was named.
-            $m = [regex]::Match($computerName, '^MRM(\d{4})-')
-            if (-not $m.Success) {
-                throw "-Unattended needs -PropertyCode for MRM: couldn't read a 4-digit property code out of the computer name '$computerName'."
-            }
-            Write-Host "-Unattended with no -PropertyCode - using '$($m.Groups[1].Value)' from the computer name."
+    # The property code is the 4 digits already in the computer name - that's where it came from
+    # when the machine was named - so only ask for it if the name doesn't carry one.
+    if ($accountCompany -eq 'MRM' -and -not $accountArgs.ContainsKey('PropertyCode')) {
+        $m = [regex]::Match($computerName, '^MRM(\d{4})-')
+        if ($m.Success) {
+            Write-Host "Using property code '$($m.Groups[1].Value)' from the computer name."
             $accountArgs['PropertyCode'] = $m.Groups[1].Value
+        } elseif ($Unattended) {
+            throw "-Unattended needs -PropertyCode for MRM: couldn't read a 4-digit property code out of the computer name '$computerName'."
         }
     }
 
-    & "$MerionITRoot\DefaultAccounts.ps1" -Company $company @accountArgs
-    if (Test-Path "$MerionITRoot\tweaks\bginfo.ps1") {
-        & "$MerionITRoot\tweaks\bginfo.ps1"
+    if ($Unattended -and -not $accountArgs.ContainsKey('UserName')) {
+        # -Unattended has to mean "never prompt". Skipping is the safe default: it creates nothing.
+        # Add the named account afterwards with SingleUser.ps1, which survives the end-of-run
+        # cleanup precisely for this.
+        Write-Host "-Unattended with no -UserName - skipping named user account creation. Use SingleUser.ps1 to add it later."
+        $accountArgs['UserName'] = ''
     }
 } else {
-    Write-Warning "Computer name prefix '$prefix' not recognized (expected DES/MRM/MRQ/MRP). Skipping default account setup."
+    Write-Warning "Computer name prefix '$prefix' has no company - creating pcsadmin only."
+}
+
+& "$MerionITRoot\DefaultAccounts.ps1" @accountArgs
+if (Test-Path "$MerionITRoot\tweaks\bginfo.ps1") {
+    & "$MerionITRoot\tweaks\bginfo.ps1"
 }
 
 # Agent check - Agent-Install.ps1 detects an existing install and skips itself automatically.
