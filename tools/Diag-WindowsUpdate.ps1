@@ -21,7 +21,7 @@
     Collect diagnostics only. Use this when you want to read the history without clearing it.
 
 .EXAMPLE
-    powershell.exe -ExecutionPolicy Unrestricted -File C:\MerionIT\Diag-WindowsUpdate.ps1
+    powershell.exe -ExecutionPolicy Unrestricted -File C:\MerionIT\tools\Diag-WindowsUpdate.ps1
 #>
 param(
     [switch]$NoReset,

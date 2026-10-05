@@ -1,7 +1,7 @@
 #Requires -RunAsAdministrator
 <#
-Main orchestrator. Replaces 1st_Step.bat, folding in the improvements that used to only exist in
-Merion IT Admin's personal 1st_Step.txt scratch notes (MRP company support, auto OS-detect to launch
+Main orchestrator. Replaces Step1.bat, folding in the improvements that used to only exist in
+Merion IT Admin's personal Step1.txt scratch notes (MRP company support, auto OS-detect to launch
 2nd/3rd step). Also this is what RunOnce re-launches automatically after the rename reboot
 (see RenamePC.ps1) - so it must be safe to run twice: it detects "already renamed" and skips
 straight past the rename step.
@@ -23,12 +23,13 @@ with a full pipeline re-run - so a restored blueprint file never survives past t
 
 Full console output (including everything RenamePC.ps1/DefaultAccounts.ps1/Agent-Install.ps1/
 Install-Apps.ps1 print, since they run in-process from here) is transcribed to
-C:\MerionIT\logs\1st_Step-<timestamp>.log. A rename reboot cuts the transcript short - RunOnce
+C:\MerionIT\logs\Step1-Accounts-Apps-<timestamp>.log. A rename reboot cuts the transcript short - RunOnce
 starts a fresh one when this script relaunches after restart.
 
-Reassigning an already-named machine to a new user: the rename gate below only fires on a
-factory "DES*" name, so a machine that already has a Merion name could never be renamed through
-this script - it fell straight through to account setup and kept the old user's name forever.
+Reassigning an already-named machine to a new user: the rename gate below fires on any name that
+doesn't start with MRM/MRQ/MRP/MIT (DESKTOP-xxxx, LAPTOP-xxxx, anything else a vendor ships), so a
+machine that already has a Merion name would never be renamed through this script - it would fall
+straight through to account setup and keep the old user's name forever.
 Pass -ForceRename (plus the RenamePC.ps1 parameters you want) to take that path deliberately.
 -Unattended additionally removes the two confirmation prompts here, so the whole thing can run
 over Kaseya/SSH with no interactive console.
@@ -39,7 +40,7 @@ param(
     [ValidateSet('MRM', 'MRQ', 'MRP')]
     [string]$Company,
 
-    # Run the rename step even though this machine already has a non-"DES" name.
+    # Run the rename step even though this machine already has an MRM/MRQ/MRP name.
     [switch]$ForceRename,
 
     # Passed straight through to RenamePC.ps1 - see its param block for meanings.
@@ -77,14 +78,14 @@ $CompletionMarker = Join-Path $MerionITRoot ".setup-complete"
 
 $LogDir = Join-Path $MerionITRoot "logs"
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
-Start-Transcript -Path (Join-Path $LogDir "1st_Step-$(Get-Date -Format 'yyyy-MM-dd_HHmmss').log") | Out-Null
+Start-Transcript -Path (Join-Path $LogDir "Step1-Accounts-Apps-$(Get-Date -Format 'yyyy-MM-dd_HHmmss').log") | Out-Null
 
 function Remove-SetupBlueprintFiles {
     param([string]$Root)
     $blueprintFiles = @(
-        "RenamePC.ps1",
-        "DefaultAccounts.ps1",
-        "MITUser.ps1"
+        "setup\RenamePC.ps1",
+        "setup\DefaultAccounts.ps1",
+        "setup\MITUser.ps1"
     )
     foreach ($f in $blueprintFiles) {
         $path = Join-Path $Root $f
@@ -95,8 +96,8 @@ function Remove-SetupBlueprintFiles {
     }
 }
 
-if (Test-Path "$MerionITRoot\updatePCtime.bat") {
-    Start-Process cmd.exe -ArgumentList "/c `"$MerionITRoot\updatePCtime.bat`"" -NoNewWindow -Wait
+if (Test-Path "$MerionITRoot\setup\updatePCtime.bat") {
+    Start-Process cmd.exe -ArgumentList "/c `"$MerionITRoot\setup\updatePCtime.bat`"" -NoNewWindow -Wait
 }
 
 $computerName = $env:COMPUTERNAME
@@ -149,7 +150,7 @@ if ($namedPrefixes -notcontains $prefix -or $ForceRename) {
     if ($Unattended) { $renameArgs['Force'] = $true }
     if ($NoReboot) { $renameArgs['NoReboot'] = $true }
 
-    & "$MerionITRoot\RenamePC.ps1" -Company $renameCompany @renameArgs
+    & "$MerionITRoot\setup\RenamePC.ps1" -Company $renameCompany @renameArgs
     # RenamePC.ps1 reboots the machine (rename requires it) - nothing more to do this session.
     return
 }
@@ -218,22 +219,22 @@ if ($accountCompany) {
     Write-Warning "Computer name prefix '$prefix' has no company - creating pcsadmin only."
 }
 
-& "$MerionITRoot\DefaultAccounts.ps1" @accountArgs
+& "$MerionITRoot\setup\DefaultAccounts.ps1" @accountArgs
 if (Test-Path "$MerionITRoot\tweaks\bginfo.ps1") {
     & "$MerionITRoot\tweaks\bginfo.ps1"
 }
 
 # Agent check - Agent-Install.ps1 detects an existing install and skips itself automatically.
-& "$MerionITRoot\Agent-Install.ps1"
+& "$MerionITRoot\setup\Agent-Install.ps1"
 
 # Apps always run - every machine should have the full standard set. Install-Apps.ps1 detects
 # anything already present (even if installed manually) and updates it instead of reinstalling.
-& "$MerionITRoot\Install-Apps.ps1"
+& "$MerionITRoot\setup\Install-Apps.ps1"
 
 # Office always runs too - Fix-OfficeLanguages.ps1 already detects its own three cases (no Office
 # -> install fresh, extra language packs -> clean up, already correct -> no-op), so it's safe to
 # call unconditionally every time rather than relying on a tech to remember it's needed.
-& "$MerionITRoot\Fix-OfficeLanguages.ps1"
+& "$MerionITRoot\setup\Fix-OfficeLanguages.ps1"
 
 if (Test-Path "$MerionITRoot\secrets.psd1") {
     if ($DeleteSecrets) {
@@ -252,7 +253,7 @@ if (Test-Path "$MerionITRoot\secrets.psd1") {
         Write-Warning "secrets.psd1 left in place - remember to delete it manually once setup is fully done."
         # Insert before the closing "====" banner line so this lands inside the checklist box
         # instead of trailing after it.
-        $reminderPath = Join-Path $MerionITRoot "Manual-Steps-Reminder.txt"
+        $reminderPath = Join-Path $MerionITRoot "setup\Manual-Steps-Reminder.txt"
         $reminderLine = "[ ] Delete C:\MerionIT\secrets.psd1 - it was left in place during setup"
         if ((Test-Path $reminderPath) -and -not (Select-String -Path $reminderPath -Pattern ([regex]::Escape($reminderLine)) -Quiet)) {
             $content = @(Get-Content -Path $reminderPath)
@@ -272,17 +273,17 @@ Get-Date -Format "yyyy-MM-dd HH:mm:ss" | Set-Content -Path $CompletionMarker
 $osName = (Get-ComputerInfo).OsName
 $stepTs = Get-Date -Format 'yyyy-MM-dd_HHmmss'
 if ($osName -like "*Windows 11*") {
-    Write-Host "Detected Windows 11 - launching 2nd_Step..."
-    Start-Process "$MerionITRoot\2nd_Step_WIN11.bat" -WorkingDirectory $MerionITRoot -NoNewWindow `
-        -RedirectStandardOutput (Join-Path $LogDir "2nd_Step_WIN11-$stepTs.log") `
-        -RedirectStandardError (Join-Path $LogDir "2nd_Step_WIN11-$stepTs.err.log")
+    Write-Host "Detected Windows 11 - launching Step2..."
+    Start-Process "$MerionITRoot\setup\Step2-Tweaks-Win11.bat" -WorkingDirectory $MerionITRoot -NoNewWindow `
+        -RedirectStandardOutput (Join-Path $LogDir "Step2-Tweaks-Win11-$stepTs.log") `
+        -RedirectStandardError (Join-Path $LogDir "Step2-Tweaks-Win11-$stepTs.err.log")
 } elseif ($osName -like "*Windows 10*") {
-    Write-Host "Detected Windows 10 - launching 3rd_Step..."
-    Start-Process "$MerionITRoot\3rd_Step_WIN10.bat" -WorkingDirectory $MerionITRoot -NoNewWindow `
-        -RedirectStandardOutput (Join-Path $LogDir "3rd_Step_WIN10-$stepTs.log") `
-        -RedirectStandardError (Join-Path $LogDir "3rd_Step_WIN10-$stepTs.err.log")
+    Write-Host "Detected Windows 10 - launching Step2..."
+    Start-Process "$MerionITRoot\setup\Step2-Tweaks-Win10.bat" -WorkingDirectory $MerionITRoot -NoNewWindow `
+        -RedirectStandardOutput (Join-Path $LogDir "Step2-Tweaks-Win10-$stepTs.log") `
+        -RedirectStandardError (Join-Path $LogDir "Step2-Tweaks-Win10-$stepTs.err.log")
 } else {
-    Write-Warning "Unrecognized OS ('$osName') - launch 2nd_Step_WIN11.bat or 3rd_Step_WIN10.bat manually."
+    Write-Warning "Unrecognized OS ('$osName') - launch Step2-Tweaks-Win11.bat or Step2-Tweaks-Win10.bat manually."
 }
 
 Stop-Transcript | Out-Null

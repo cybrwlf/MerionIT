@@ -72,7 +72,7 @@ Write-Host "======================================="
 Write-Host "Vendor driver handling..."
 Write-Host "======================================="
 
-$ReminderPath = "C:\MerionIT\Manual-Steps-Reminder.txt"
+$ReminderPath = "C:\MerionIT\setup\Manual-Steps-Reminder.txt"
 function Add-ReminderIfMissing {
     param([string]$Line)
     if (-not (Test-Path $ReminderPath)) { return }

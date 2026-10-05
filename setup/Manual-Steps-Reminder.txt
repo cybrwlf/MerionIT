@@ -11,7 +11,7 @@
 [ ] Unpin Microsoft Store from taskbar (no automated way - the underlying pin/unpin shell verb is confirmed dead on this build, see tweaks/WIN11-Pin-Taskbar-Items.ps1)
 [ ] Confirm Microsoft Store is unpinned from Start Menu (automated attempt is unverified)
 [ ] Confirm Solitaire is unpinned from Start Menu (automated attempt is unverified)
-[ ] New hire's desk? Run: SingleUser.ps1 <username>
+[ ] New hire's desk? Run: Add-User.bat <username>  (C:\MerionIT\Add-User.bat)
 [ ] If SingleUser.ps1 was used: confirm the placeholder password was reset with the new hire
     before leaving (e.g. to their M365 password, as a memory aid) - it's meant to speed up setup
     for the tech, never to be handed to the user as their real password

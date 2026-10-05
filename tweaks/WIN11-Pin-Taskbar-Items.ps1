@@ -1,10 +1,10 @@
 #Requires -RunAsAdministrator
 <#
 CONFIRMED NON-FUNCTIONAL on this fleet's current Windows 11 build (26100.7627) as of 2026-07-28 -
-NOT wired into 2nd_Step_WIN11.bat. Kept here for reference in case a future Windows update
+NOT wired into Step2-Tweaks-Win11.bat. Kept here for reference in case a future Windows update
 re-enables the underlying verb; don't re-wire this in without re-testing on a real machine first.
 Manual pinning is documented instead in Manual-Steps-Reminder.txt, which pops up in Notepad at
-the end of 2nd_Step_WIN11.bat/3rd_Step_WIN10.bat.
+the end of Step2-Tweaks-Win11.bat/Step2-Tweaks-Win10.bat.
 
 Pins Word, Excel, Outlook, Chrome, Edge, and Snipping Tool to the taskbar for the current user.
 

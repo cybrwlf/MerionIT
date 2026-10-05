@@ -3,7 +3,7 @@ Entry point. Usage from an admin PowerShell prompt on a fresh Win10/11 machine:
 
   powershell.exe -ExecutionPolicy Unrestricted -Command "irm https://raw.githubusercontent.com/cybrwlf/MerionIT/master/bootstrap.ps1 | iex"
 
-Syncs the repo into C:\MerionIT and launches 1st_Step.ps1. This is safe to re-run on an
+Syncs the repo into C:\MerionIT and launches Step1-Accounts-Apps.ps1. This is safe to re-run on an
 already-set-up machine (e.g. to pick up a newer version of the scripts) - it only ever touches
 files that are actually part of this repo. It tracks exactly which files it placed on disk
 (.repo-manifest.txt) and removes only those that no longer exist in the newer version being
@@ -13,7 +13,7 @@ real user data into, or anything else not tracked by the repo.
 Full console output is transcribed to C:\MerionIT\logs\bootstrap-<timestamp>.log.
 
 -NoLaunch syncs the files and stops there. Use it when you're driving setup remotely and want to
-call 1st_Step.ps1 yourself with explicit parameters (e.g. -ForceRename for a reassignment),
+call Step1-Accounts-Apps.ps1 yourself with explicit parameters (e.g. -ForceRename for a reassignment),
 rather than having it start the default interactive pipeline the instant the sync lands.
 #>
 param(
@@ -50,7 +50,7 @@ if (-not $extractedFolder) {
 # Repo-only files that serve no purpose on an actual machine - never synced to $Dest. Removing a
 # name from here also makes the NEXT bootstrap run clean up any stale copy already on disk (it's
 # just an ordinary manifest-tracked file at that point).
-$ExcludeFromSync = @("secrets.template.psd1", "README.md", ".gitattributes", ".gitignore")
+$ExcludeFromSync = @("docs\secrets.template.psd1", "README.md", ".gitattributes", ".gitignore")
 # Whole folders excluded the same way:
 #   archive/   dead/retired scripts kept for reference (see archive/archive-summary.md)
 #   research/  design notes and investigation write-ups - documentation for whoever maintains this
@@ -106,11 +106,11 @@ Remove-Item $ExtractPath -Recurse -Force
 Write-Host "MerionIT synced to $Dest."
 
 if ($NoLaunch) {
-    Write-Host "-NoLaunch specified - stopping here. Run $Dest\1st_Step.ps1 yourself when ready."
+    Write-Host "-NoLaunch specified - stopping here. Run $Dest\setup\Step1-Accounts-Apps.ps1 yourself when ready."
     Stop-Transcript | Out-Null
     return
 }
 
 Write-Host "Launching setup..."
 Stop-Transcript | Out-Null
-& "$Dest\1st_Step.ps1"
+& "$Dest\setup\Step1-Accounts-Apps.ps1"

@@ -16,7 +16,7 @@ Write-Host "======================================="
 Write-Host "Verifying Xbox / Dell Optimizer / WhatsApp are actually gone..."
 Write-Host "======================================="
 
-$ReminderPath = "C:\MerionIT\Manual-Steps-Reminder.txt"
+$ReminderPath = "C:\MerionIT\setup\Manual-Steps-Reminder.txt"
 function Add-ReminderIfMissing {
     # Inserts before the closing "====" banner line so dynamic reminders land inside the
     # checklist box instead of trailing after it.

@@ -2,73 +2,96 @@
 
 New-machine / new-user setup scripts for Merion Residential. Public repo — contains **no credentials or account data**.
 
-## Usage
+## Which file do I run?
 
-Fresh Windows machines default to scripts-disabled (no GPO needed to cause this - it's just
-PowerShell's out-of-the-box default when no execution policy has been configured anywhere,
-confirmed live 2026-07-29). Double-click `bootstrap.bat` as Administrator - it runs the real
-bootstrap command with a one-time `-ExecutionPolicy Bypass` that only applies to that single
-invocation, never touching the machine's actual policy setting. Every script it calls afterward
-(`1st_Step.ps1`, and everything `1st_Step.ps1` itself calls) inherits that same override
-automatically, so nothing else needs its own bypass flag.
+Double-click as Administrator (they re-launch themselves elevated if you forget). Every one starts
+PowerShell with a one-process `-ExecutionPolicy Bypass`, because a fresh Windows install blocks `.ps1`
+files by default. The machine's real execution policy is never changed.
 
-If the repo's already on disk (e.g. hand-copied via USB before this repo is reachable on
-GitHub), skip `bootstrap.bat` and just double-click `1st_Step.bat` directly instead - same
-bypass mechanism, one file instead of a download.
+| I want to… | Run | Where it gets the scripts |
+|---|---|---|
+| **Set up a machine** (any situation) | `Setup.bat` | See below. Safe to re-run any time. |
+| Just refresh the scripts, start nothing | `Update-Scripts.bat` | GitHub. Needs internet. |
+| Add a named user at an already-set-up desk | `Add-User.bat <username>` | Whatever is in `C:\MerionIT\manual\` |
 
-Equivalent manual one-liner, if you'd rather type it into an admin PowerShell prompt yourself:
+**`Setup.bat` works out the source for you:**
 
-```powershell
-powershell.exe -ExecutionPolicy Unrestricted -Command "irm https://raw.githubusercontent.com/cybrwlf/MerionIT/master/bootstrap.ps1 | iex"
+1. Run from a folder that holds the repo (USB stick, a copy in Downloads) → it **copies that folder** into `C:\MerionIT`. No internet needed. Copy only, nothing on C: is deleted.
+2. Run from `C:\MerionIT` itself, or as a lone file, **and GitHub is reachable** → it **pulls the latest** into `C:\MerionIT`.
+3. No internet → uses what is already in `C:\MerionIT`.
+
+Then it starts `setup\Step1-Accounts-Apps.ps1`. Anything you add on the command line goes to Step 1:
+
+```
+Setup.bat -ForceRename -Unattended -Company MRM -Property 1234 -Year 2026 -NoReboot
 ```
 
-This syncs the repo to `C:\MerionIT` and launches `1st_Step.ps1`.
+`Setup.bat /local` skips the GitHub pull in case 2. Use it when you've hand-copied scripts that are newer than what's pushed (a GitHub pull would overwrite them).
 
-Safe to re-run later (e.g. to pick up a newer version of the scripts) - `bootstrap.ps1` tracks exactly which files it placed on disk and only ever touches those, never log files or the real user data `backup-userfiles.ps1` writes into `backup\`. If `1st_Step.ps1` finds this machine already went through a full setup, it asks for confirmation before reapplying anything (re-running the Win10/11 tweak scripts would otherwise silently reset Start Menu/taskbar customizations someone's made since).
+If the repo is already on disk and you'd rather type it, from an admin PowerShell:
 
-Every stage - `bootstrap.ps1`, `1st_Step.ps1`, `2nd_Step_WIN11.bat`/`3rd_Step_WIN10.bat`, and `Fix-OfficeLanguages.ps1` - writes a full log of its console output to `C:\MerionIT\logs\`, named after whichever one ran (e.g. `2nd_Step_WIN11-<timestamp>.log`). If something goes wrong, send that file instead of a screenshot. One exception: `powerconfig.cmd` launches in its own detached window (via `Start`), so its own output isn't captured in the 2nd/3rd Step log.
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File C:\MerionIT\setup\Step1-Accounts-Apps.ps1
+```
 
-## What runs automatically vs. manually
+Blank machine, internet only, no files at all (this URL is also what `Jarvis\tools\setup-new-machine.bat` uses, so `bootstrap.ps1` stays in the repo root):
 
-`1st_Step.ps1` runs the account setup, an RMM agent check (skips itself if the agent's already installed), the full app install/update, and Office setup/language cleanup - every machine should have the same apps and a clean English-only Office, so those always fire. Nothing else needs picking from a menu.
+```powershell
+powershell.exe -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/cybrwlf/MerionIT/master/bootstrap.ps1 | iex"
+```
 
-**Manual-only, never automatic:**
-- `backup-userfiles.ps1` — only run this by hand when offboarding someone (`powershell.exe -ExecutionPolicy Unrestricted -File C:\MerionIT\backup-userfiles.ps1`).
-- `SingleUser.ps1 <username>` — add one named account to an already-set-up machine (new hire at an existing desk) without re-running the full pipeline. Prompts for its own password at runtime, so it's fine to leave on disk indefinitely.
-- Pinning Word/Excel/Outlook/Chrome/Edge/Snipping Tool to the taskbar — Windows 11 has no working automated way to do this (see `tweaks/WIN11-Pin-Taskbar-Items.ps1`'s header for what was tried and confirmed dead). `Manual-Steps-Reminder.txt` pops up in Notepad at the end of `2nd_Step_WIN11.bat`/`3rd_Step_WIN10.bat` to flag this and a couple of other end-of-setup checks a human still needs to do.
+Re-running is safe. `bootstrap.ps1` tracks exactly which files it placed on disk and only ever touches those, never log files or the real user data `manual\backup-userfiles.ps1` writes into `backup\`. If Step 1 finds this machine already went through a full setup, it asks for confirmation before reapplying anything (re-running the Win10/11 tweak scripts would otherwise silently reset Start Menu/taskbar customizations someone's made since).
+
+Every stage — `bootstrap.ps1`, Step 1, Step 2, and `Fix-OfficeLanguages.ps1` — writes a full log of its console output to `C:\MerionIT\logs\`, named after whichever one ran (e.g. `Step2-Tweaks-Win11-<timestamp>.log`). If something goes wrong, send that file instead of a screenshot. One exception: `powerconfig.cmd` launches in its own detached window (via `Start`), so its own output isn't captured in the Step 2 log.
+
+## The order things run
+
+1. `Setup.bat` — gets the files into `C:\MerionIT`.
+2. `setup\Step1-Accounts-Apps.ps1` — rename (if the name isn't an MRM/MRQ/MRP/MIT one), `pcsadmin` + company accounts, RMM agent check, apps, Office. A rename reboots the machine and Step 1 re-launches itself afterwards (RunOnce).
+3. `setup\Step2-Tweaks-Win11.bat` **or** `setup\Step2-Tweaks-Win10.bat` — Step 1 picks the one that matches the OS and launches it. They are alternatives, not a sequence.
+
+`Step1-Accounts-Apps.ps1` runs the account setup, an RMM agent check (skips itself if the agent's already installed), the full app install/update, and Office setup/language cleanup — every machine should have the same apps and a clean English-only Office, so those always fire. Nothing else needs picking from a menu.
+
+`pcsadmin` is created on every run, whatever the computer name. The company account (`TempUser` for MRM, the named user for MRQ) needs the company, which comes from the name prefix. For MRM the 4-digit property code is read from the computer name (`MRM8075-...` → `8075`) and only asked for if the name doesn't carry one.
+
+**Manual-only, never automatic** (all in `manual\`):
+- `backup-userfiles.ps1` — only run this by hand when offboarding someone (`powershell.exe -ExecutionPolicy Bypass -File C:\MerionIT\manual\backup-userfiles.ps1`).
+- `SingleUser.ps1 <username>` (or `Add-User.bat`) — add one named account to an already-set-up machine (new hire at an existing desk) without re-running the full pipeline. Prompts for its own password at runtime, so it's fine to leave on disk indefinitely.
+- `RemoveUserProfile.ps1` — remove a user profile (`-WhatIf` first).
+- Pinning Word/Excel/Outlook/Chrome/Edge/Snipping Tool to the taskbar — Windows 11 has no working automated way to do this (see `tweaks/WIN11-Pin-Taskbar-Items.ps1`'s header for what was tried and confirmed dead). `setup\Manual-Steps-Reminder.txt` pops up in Notepad at the end of Step 2 to flag this and a couple of other end-of-setup checks a human still needs to do.
 
 ## Automatic cleanup
 
-Once a full setup run finishes, `1st_Step.ps1` deletes the setup-only files that aren't needed once the machine is live - denying anyone who later gets local access a blueprint of how initial setup worked. `SingleUser.ps1` is deliberately excluded from this (see above). This replaces the old manual `9th_Step.bat` "delete everything" step entirely - it's automatic now, and surgical rather than a blanket wipe.
+Once a full setup run finishes, Step 1 deletes the setup-only files that aren't needed once the machine is live (`setup\RenamePC.ps1`, `setup\DefaultAccounts.ps1`, `setup\MITUser.ps1`) — denying anyone who later gets local access a blueprint of how initial setup worked. Everything in `manual\` is deliberately excluded from this. `Setup.bat` or `Update-Scripts.bat` restores the scrubbed files if you need them again.
 
 ## Layout
 
-- `bootstrap.ps1` (double-click `bootstrap.bat` instead - see Usage above) — entry point, syncs the repo and starts setup.
-- `1st_Step.ps1` (double-click `1st_Step.bat` instead if the repo's already on disk) — rename detection, account setup, agent check, app install, OS-version detection, end-of-run cleanup.
-- `RenamePC.ps1` — computer naming (MRM/MRQ/MRP). Desktop-vs-laptop is auto-detected for every company (battery/chassis signals, see `research/Test-MachineDetection.ps1`) with a manual fallback if ambiguous. Purchase year is also auto-detected (CPU generation vs. OS install date) for every company, with a manual fallback for large/undetermined gaps (likely a rebuild). Scrubbed after setup completes.
-- `DefaultAccounts.ps1` — creates `pcsadmin`/`TempUser` (and legacy `scanner`, unused for new setups) per company. Scrubbed after setup completes.
-- `SingleUser.ps1` — new-employee named local account (manual, persists indefinitely).
-- `MITUser.ps1` — annual MIT-event loaner account (separate, one-off use). Scrubbed after setup completes.
-- `Install-Apps.ps1` — winget-first/Scoop-fallback app installer/updater, logs to `C:\MerionIT\InstallLog.csv`.
-- `Fix-OfficeLanguages.ps1` — installs Office fresh if missing, strips extra Dell OEM Office language packs if present, no-ops if already correct. Runs automatically every time.
-- `Agent-Install.ps1` — checks for the RMM agent, opens the installer page only if it's missing.
-- `tweaks/vendor-drivers.ps1` — branches on `Win32_ComputerSystem.Manufacturer`. Dell gets SupportAssist removed and Dell Command Update installed, silenced and run; every other vendor falls through to Windows Update, which `tweaks/basic10-11stuff.ps1` has already configured. Lenovo was evaluated and deliberately uses Windows Update — System Update is GUI-bound and Thin Installer needs a package repository you have to build and maintain, which doesn't suit properties being bought and sold. On Dell it also sets `ExcludeWUDriversInQualityUpdate=1` once DCU is verified working, so Windows Update stops offering drivers that DCU already handles; on every other vendor it *clears* that value, since WU is their only driver path. Prefers `Dell-Command-Update*.EXE` in `C:\MerionIT\apps` (~86 MB, too big for the repo); if that isn't staged it falls back to `winget install Dell.CommandUpdate`, which is the path remote machines take since nobody can hand-carry a USB to them. Note that `tweaks/WIN11-removebloat-appx.ps1` must **not** remove Dell Command Update — it used to, which silently broke this script (see that file's header).
-- `tweaks/remove-mcafee.ps1` — detects the McAfee OEM trial, strips its five reinstall scheduled tasks, and flags the removal in `Manual-Steps-Reminder.txt`. The removal itself **cannot** be automated: `mccleanup.exe` validates its parent process and refuses to run unless McAfee's own `McClnUI.exe` launched it. Order matters — the hooks have to go before MCPR runs, or McAfee reinstalls itself at the next logon and activates, after which MCPR stops working entirely.
-- `backup-userfiles.ps1` — offboarding backup (manual).
-- `Manual-Steps-Reminder.txt` — opens in Notepad at the end of `2nd_Step_WIN11.bat`/`3rd_Step_WIN10.bat` to flag the handful of things a human still needs to do (taskbar pins, new-employee named account, RMM portal check). Edit this file directly to add/remove checklist items - it's plain text, synced to `C:\MerionIT` like everything else.
-- `tools/` — operational scripts for machines that are **already deployed** (everything in `tweaks/` runs during provisioning; these run afterwards, usually through Kaseya). See `tools/README.md` for ready-to-paste Kaseya commands and how to read the output.
-- `tools/Repair-MerionWindowsUpdate.ps1` — brings an already-deployed machine's Windows Update policy to the current standard, without re-provisioning. Fixes the three things the pre-2026-09-22 script got wrong: automatic updates switched off entirely (`NoAutoUpdate=1`), the "managed by your organization" banner (`NoAutoRebootWithLoggedOnUsers`), and driver offers being wrong for the vendor. Safe to run via Kaseya as SYSTEM and safe to re-run. **`-ReportOnly` changes nothing** — use it for the fleet sweep to count affected machines before touching any. Emits a single `RESULT|...` line per machine for collection. On Dell it only suppresses WU driver offers if `dcu-cli` is verified *working*, because doing it on a machine with a broken DCU leaves no driver path at all.
-- `tools/Diag-WindowsUpdate.ps1` — diagnoses a Windows Update loop ("installs in seconds, demands a reboot, comes back with the same list"), then resets the update stack. Run it, reboot, run it again, compare the two logs in `C:\MerionIT\logs\wu-diag-*.txt`. Captures diagnostics **before** resetting, because the reset deletes `SoftwareDistribution` and the update history lives inside it. `-NoReset` collects without clearing.
-- `tweaks/` — Win10/11 UI and debloat tweaks (includes `WIN11-Pin-Taskbar-Items.ps1`, kept for reference but NOT wired in - confirmed non-functional on the current Windows 11 build, see its header).
+- `Setup.bat`, `Update-Scripts.bat`, `Add-User.bat` — the only things you launch. See the table above.
+- `bootstrap.ps1` — the online engine behind `Setup.bat`/`Update-Scripts.bat`. Stays in the root because the `raw.githubusercontent.com/.../bootstrap.ps1` URL is used by one-liners and `Jarvis\tools\setup-new-machine.bat`.
+- `setup/` — everything the first-time pipeline runs:
+  - `Step1-Accounts-Apps.ps1`, `Step2-Tweaks-Win11.bat`, `Step2-Tweaks-Win10.bat` — the pipeline itself.
+  - `RenamePC.ps1` — computer naming (MRM/MRQ/MRP). Desktop-vs-laptop is auto-detected for every company (battery/chassis signals, see `research/Test-MachineDetection.ps1`) with a manual fallback if ambiguous. Purchase year is also auto-detected (CPU generation vs. OS install date) for every company, with a manual fallback for large/undetermined gaps (likely a rebuild); an unattended run (`-Force`) on a CPU the table doesn't know needs an explicit `-Year`. Scrubbed after setup completes.
+  - `DefaultAccounts.ps1` — creates `pcsadmin` everywhere, plus `TempUser` (MRM) or the named user (MRQ). Scrubbed after setup completes.
+  - `MITUser.ps1` — annual MIT-event loaner account (separate, one-off use). Scrubbed after setup completes.
+  - `Install-Apps.ps1` — winget-first/Scoop-fallback app installer/updater, logs to `C:\MerionIT\InstallLog.csv`.
+  - `Fix-OfficeLanguages.ps1` — installs Office fresh if missing, strips extra Dell OEM Office language packs if present, no-ops if already correct. Runs automatically every time.
+  - `Agent-Install.ps1` — checks for the RMM agent, opens the installer page only if it's missing.
+  - `powerconfig.cmd`, `updatePCtime.bat`, `Manual-Steps-Reminder.txt` — power plan, clock sync, and the end-of-setup checklist. Edit the checklist directly to add/remove items; it's plain text.
+- `manual/` — run by hand: `SingleUser.ps1`, `backup-userfiles.ps1`, `RemoveUserProfile.ps1`.
+- `tweaks/` — Win10/11 UI and debloat tweaks (includes `WIN11-Pin-Taskbar-Items.ps1`, kept for reference but NOT wired in — confirmed non-functional on the current Windows 11 build, see its header). `tweaks/vendor-drivers.ps1` branches on `Win32_ComputerSystem.Manufacturer`. Dell gets SupportAssist removed and Dell Command Update installed, silenced and run; every other vendor falls through to Windows Update. Lenovo was evaluated and deliberately uses Windows Update. On Dell it also sets `ExcludeWUDriversInQualityUpdate=1` once DCU is verified working; on every other vendor it *clears* that value, since WU is their only driver path. Prefers `Dell-Command-Update*.EXE` in `C:\MerionIT\apps` (~86 MB, too big for the repo); if that isn't staged it falls back to `winget install Dell.CommandUpdate`. `tweaks/WIN11-removebloat-appx.ps1` must **not** remove Dell Command Update (see that file's header).
+- `tweaks/remove-mcafee.ps1` — detects the McAfee OEM trial, strips its five reinstall scheduled tasks, and flags the removal in `setup\Manual-Steps-Reminder.txt`. The removal itself **cannot** be automated: `mccleanup.exe` validates its parent process and refuses to run unless McAfee's own `McClnUI.exe` launched it. Order matters — the hooks have to go before MCPR runs, or McAfee reinstalls itself at the next logon and activates, after which MCPR stops working entirely.
+- `tools/` — operational scripts for machines that are **already deployed** (everything in `tweaks/` runs during provisioning; these run afterwards, usually through Kaseya). See `tools/README.md` for ready-to-paste Kaseya commands and how to read the output. `tools/Repair-MerionWindowsUpdate.ps1` brings a deployed machine's Windows Update policy to the current standard (`-ReportOnly` changes nothing). `tools/Diag-WindowsUpdate.ps1` diagnoses a Windows Update loop, then resets the update stack (`-NoReset` collects without clearing).
 - `reg/` — registry fixes.
-- `2nd_Step_WIN11.bat` / `3rd_Step_WIN10.bat` — later stages, unchanged from the original process.
+- `docs/` — `OOBE-notes.txt`, the two Yardi URL files (kept for quick reference during manual setup), and `secrets.template.psd1` (the safe blank; the real `secrets.psd1` is never committed and is not synced).
+- `research/`, `archive/` — design notes and retired scripts. Repo-only, never synced to a machine.
 
 ## Notes
 
 - **OOBE internet bypass**: on the Windows 11 setup screen, press `Shift + F10` to open Command Prompt, then type `oobe\bypassnro` (no spaces) and press Enter to skip the internet-connection requirement. The machine restarts immediately after.
-- `Yardi Screening.txt` / `yardi checkscan url.txt` — Yardi resident-screening and check-scan login URLs, kept here for quick reference during manual setup.
+- Large installers (Dell Command Update, MCPR) are not in the repo. Stage them in `C:\MerionIT\apps`; `Setup.bat` copies an `apps\` folder along when you run it from a USB folder that has one.
 
 ## Security notes
 
-- Execution policy is only ever set per-invocation (`-ExecutionPolicy Unrestricted` on the command line) — never persisted system-wide. End users should never be able to run these scripts after setup is complete.
-- `RenamePC.ps1`/`DefaultAccounts.ps1`/`MITUser.ps1` are automatically removed from the machine once setup completes (see "Automatic cleanup" above) - they don't need to persist, and leaving them would hand anyone with later local access a blueprint of the account-creation scheme.
+- Execution policy is only ever set per-invocation (`-ExecutionPolicy Bypass` on the command line) — never persisted system-wide. End users should never be able to run these scripts after setup is complete.
+- `setup\RenamePC.ps1`/`setup\DefaultAccounts.ps1`/`setup\MITUser.ps1` are automatically removed from the machine once setup completes (see "Automatic cleanup" above) — they don't need to persist, and leaving them would hand anyone with later local access a blueprint of the account-creation scheme.
+- `secrets.psd1` lives only at `C:\MerionIT\secrets.psd1` and is gitignored. Step 1 asks before deleting it (`-DeleteSecrets` to auto-delete; `-Unattended` alone never deletes it).

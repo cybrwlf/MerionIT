@@ -2,7 +2,7 @@
 RMM/monitoring agent check. Confirmed with Merion IT Admin: every property (MRM, MRQ, MRP, MIT, etc.)
 uses the same Moorestown > CSU B Windows Agent Installer - no per-property lookup needed.
 
-Runs automatically as part of 1st_Step.ps1 - detects whether the agent is already installed and
+Runs automatically as part of Step1-Accounts-Apps.ps1 - detects whether the agent is already installed and
 skips itself silently if so, so it never nags on a machine that already has it. If the agent
 exists but is broken, that's a manual repair (download the installer and run it with -r-w) -
 there's no reliable way to automatically tell "fine" apart from "broken", so that stays a human
@@ -38,7 +38,7 @@ Write-Warning "RMM agent not detected."
 # when testing/re-running setup repeatedly on the same machine in a single day. A stale copy
 # (over a day old) is removed so a re-run after that always grabs a fresh installer instead of
 # silently reusing one that might be outdated.
-$appsDir = Join-Path $PSScriptRoot "apps"
+$appsDir = Join-Path (Split-Path $PSScriptRoot -Parent) "apps"
 New-Item -ItemType Directory -Path $appsDir -Force | Out-Null
 $installerPath = Join-Path $appsDir "KcsSetup.exe"
 

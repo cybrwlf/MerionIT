@@ -1,6 +1,6 @@
 #Requires -RunAsAdministrator
 <#
-Installs/updates the standard app set. Runs automatically every time as part of 1st_Step.ps1 -
+Installs/updates the standard app set. Runs automatically every time as part of Step1-Accounts-Apps.ps1 -
 every machine should have this full set, so it always fires rather than being a manual menu choice.
 
 Starts by making sure winget is actually ready to use: it's provisioned per-user by an
@@ -207,7 +207,7 @@ function Sync-AdvancedIPScannerToAppsDir {
         return
     }
 
-    $appsDir = Join-Path $PSScriptRoot "apps"
+    $appsDir = Join-Path (Split-Path $PSScriptRoot -Parent) "apps"
     $dest = Join-Path $appsDir "advanced-ip-scanner"
     New-Item -ItemType Directory -Path $appsDir -Force | Out-Null
     if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }

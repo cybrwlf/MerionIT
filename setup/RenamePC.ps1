@@ -251,18 +251,18 @@ if ($Force) {
 }
 
 if ($namecheck -eq 'Y') {
-    # Try to auto-resume 1st_Step.ps1 after the reboot this rename requires, so the
+    # Try to auto-resume Step1-Accounts-Apps.ps1 after the reboot this rename requires, so the
     # tech doesn't have to remember to log back in and re-run it manually. If this
     # doesn't fire reliably in the field, the old manual "log back in and re-run"
     # process still works exactly as before.
     try {
         Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" `
             -Name "MerionITResume" `
-            -Value 'powershell.exe -ExecutionPolicy Unrestricted -File C:\MerionIT\1st_Step.ps1' `
+            -Value 'powershell.exe -ExecutionPolicy Unrestricted -File C:\MerionIT\setup\Step1-Accounts-Apps.ps1' `
             -ErrorAction Stop
-        Write-Host "RunOnce resume set - 1st_Step.ps1 will relaunch automatically after reboot."
+        Write-Host "RunOnce resume set - Step1-Accounts-Apps.ps1 will relaunch automatically after reboot."
     } catch {
-        Write-Warning "Could not set RunOnce resume ($($_.Exception.Message)). After reboot, log back in and re-run 1st_Step.ps1 manually to verify the rename took."
+        Write-Warning "Could not set RunOnce resume ($($_.Exception.Message)). After reboot, log back in and re-run Step1-Accounts-Apps.ps1 manually to verify the rename took."
     }
 
     # -Force on Rename-Computer suppresses its own confirmation, which otherwise has nothing to

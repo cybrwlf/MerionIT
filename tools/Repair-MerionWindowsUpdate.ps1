@@ -52,8 +52,8 @@
     it answers "how many machines are affected" without touching any of them.
 
 .PARAMETER AddToReminder
-    Write any findings into C:\MerionIT\Manual-Steps-Reminder.txt, which opens in Notepad at the end
-    of 2nd_Step/3rd_Step. This is how provisioning checks its own work: the recurring failure across
+    Write any findings into C:\MerionIT\setup\Manual-Steps-Reminder.txt, which opens in Notepad at the end
+    of Step2/Step2. This is how provisioning checks its own work: the recurring failure across
     this toolkit has been scripts reporting success without verifying it, and a machine should not
     be able to leave IT with a broken update policy that nobody saw. Off by default so a fleet sweep
     does not write to disk on every machine it measures.
@@ -108,7 +108,7 @@ if ($FixDrivers -and $ReportOnly) {
     $FixDrivers = $false
 }
 
-$ReminderPath = "C:\MerionIT\Manual-Steps-Reminder.txt"
+$ReminderPath = "C:\MerionIT\setup\Manual-Steps-Reminder.txt"
 function Add-ReminderIfMissing {
     param([string]$Line)
     if (-not (Test-Path $ReminderPath)) { return }

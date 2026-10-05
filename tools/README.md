@@ -40,7 +40,7 @@ Confirmed identical on three machines across three properties, laptop and deskto
 | Parameter | Effect |
 |---|---|
 | `-ReportOnly` | **Changes nothing.** Use for the fleet sweep. Never invokes `dcu-cli`. |
-| `-AddToReminder` | Writes findings into `C:\MerionIT\Manual-Steps-Reminder.txt`. Used by `2nd_Step`/`3rd_Step`. Leave off for sweeps. |
+| `-AddToReminder` | Writes findings into `C:\MerionIT\setup\Manual-Steps-Reminder.txt`. Used by `Step2-Tweaks-Win11`/`Step2-Tweaks-Win10`. Leave off for sweeps. |
 | *(neither)* | Repairs what it can and reports what still needs a human. |
 
 ### Kaseya — audit a machine (safe, changes nothing)

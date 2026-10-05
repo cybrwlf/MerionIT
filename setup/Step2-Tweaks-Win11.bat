@@ -40,7 +40,7 @@ powershell.exe -ExecutionPolicy UnRestricted -File tweaks\Clean_win_updates_cach
 echo [Step 14 of 16] Vendor drivers (Dell Command Update, or Windows Update elsewhere)...
 powershell.exe -ExecutionPolicy UnRestricted -File tweaks\vendor-drivers.ps1
 echo [Step 15 of 16] Applying power configuration...
-Start cmd.exe /c call powerconfig.cmd
+Start cmd.exe /c call setup\powerconfig.cmd
 ping 127.0.0.1 -n 5 > nul
 
 rem Provisioning checks its own work. The recurring failure across this toolkit has been scripts
@@ -51,4 +51,4 @@ echo [Step 16 of 16] Verifying Windows Update policy...
 powershell.exe -ExecutionPolicy UnRestricted -File tools\Repair-MerionWindowsUpdate.ps1 -AddToReminder
 
 echo All steps complete.
-notepad.exe "C:\MerionIT\Manual-Steps-Reminder.txt"
+notepad.exe "C:\MerionIT\setup\Manual-Steps-Reminder.txt"
