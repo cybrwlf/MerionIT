@@ -95,13 +95,7 @@ If (!(Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Flyout
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FlyoutMenuSettings" -Name "ShowHibernateOption" -Type Dword -Value 0 -ErrorAction SilentlyContinue
 
 Write-Host "======================================="
-Write-Host "Disabling Location Tracking and Maps updates..."
-If (!(Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location")) {
-    New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location" -Force | Out-Null
-}
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location" -Name "Value" -Type String -Value "Deny" -ErrorAction SilentlyContinue
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Sensor\Overrides\{BFA794E4-F964-4FDB-90F6-51056BFE4B44}" -Name "SensorPermissionState" -Type DWord -Value 0 -ErrorAction SilentlyContinue
-Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\lfsvc\Service\Configuration" -Name "Status" -Type DWord -Value 0 -ErrorAction SilentlyContinue
+Write-Host "Disabling Maps updates (location itself is ALLOWED - see the Location block after O&O Shutup)..."
 Set-ItemProperty -Path "HKLM:\SYSTEM\Maps" -Name "AutoUpdateEnabled" -Type DWord -Value 0 -ErrorAction SilentlyContinue
 Write-Host "======================================="
 Write-Host "Disabling TPM Check for upgrades (if applicable)..."
@@ -188,6 +182,21 @@ If (Test-Path ".\OOSU10.exe") {
 } else {
     Write-Host "OOSU10.exe not found, skipping O&O Shutup execution."
 }
+
+# Location is ALLOWED on Merion machines (changed 2026-10-09; it used to be denied). This has to run
+# AFTER O&O Shutup, which can write the DisableLocation policy and would otherwise win. Observed on
+# MRM8075-LT101 after a full run: consent=Deny, DisableLocation=1, sensor override=0.
+Write-Host "======================================="
+Write-Host "Allowing Location services..."
+$consentPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location"
+If (!(Test-Path $consentPath)) { New-Item -Path $consentPath -Force | Out-Null }
+Set-ItemProperty -Path $consentPath -Name "Value" -Type String -Value "Allow" -ErrorAction SilentlyContinue
+# A policy value of 1 overrides the consent setting above and greys out the toggle, so remove it.
+Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" -Name "DisableLocation" -ErrorAction SilentlyContinue
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Sensor\Overrides\{BFA794E4-F964-4FDB-90F6-51056BFE4B44}" -Name "SensorPermissionState" -Type DWord -Value 1 -ErrorAction SilentlyContinue
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\lfsvc\Service\Configuration" -Name "Status" -Type DWord -Value 1 -ErrorAction SilentlyContinue
+Get-Service -Name lfsvc -ErrorAction SilentlyContinue | Set-Service -StartupType Manual -ErrorAction SilentlyContinue
+Start-Service -Name lfsvc -ErrorAction SilentlyContinue
 
 Write-Host "======================================="
 Write-Host "Setting Services to Manual... "

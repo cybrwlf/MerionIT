@@ -51,6 +51,7 @@ $AppXBloatware = @(
 	"Microsoft.Office.Lens"
 	"Microsoft.People"
 	"Microsoft.Whiteboard"
+	"Microsoft.M365Companions" # "Calendar" window that pops up minimized at logon (Calendar.exe /minimize); also People and Files companions. Seen on MRM8075-LT101 2026-10-09
 	"Microsoft.Wallet" # Less relevant in Win11 UI
 
 	# Communication/Social
