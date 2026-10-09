@@ -92,6 +92,19 @@ foreach ($rel in $newFiles) {
     Copy-Item -Path $src -Destination $dstFile -Force
 }
 
+# Loose files in the top of $Dest that this version doesn't ship: old builds, hand copies, USB copies
+# that never wrote a manifest. Files only - subfolders and everything in them are never touched.
+# These four stay: credentials, the "already set up" marker, this manifest, the install log.
+# Same list as the matching step in Setup.bat.
+$keepAtRoot = @('secrets.psd1', '.setup-complete', '.repo-manifest.txt', 'InstallLog.csv')
+$shippedAtRoot = @($newFiles | Where-Object { $_ -notlike '*\*' })
+Get-ChildItem -Path $Dest -File -Force | Where-Object {
+    ($keepAtRoot -notcontains $_.Name) -and ($shippedAtRoot -notcontains $_.Name)
+} | ForEach-Object {
+    Remove-Item -LiteralPath $_.FullName -Force
+    Write-Host "Removed old root file: $($_.Name)"
+}
+
 # Clean up any now-empty directories left behind by removed files
 Get-ChildItem -Path $Dest -Recurse -Directory -ErrorAction SilentlyContinue |
     Sort-Object -Property FullName -Descending |

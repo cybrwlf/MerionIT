@@ -6,7 +6,8 @@ REM Double-click this on a new or half-set-up machine. It works out where the sc
 REM from, puts them in C:\MerionIT, then starts Step 1. Safe to re-run at any time.
 REM
 REM   Run from a folder that holds the repo (USB stick, a copy in Downloads)
-REM       -> copies that folder into C:\MerionIT (copy only, nothing on C: is deleted)
+REM       -> copies that folder into C:\MerionIT, then removes loose files left in the top of
+REM          C:\MerionIT by older builds (files only: subfolders and their contents are never touched)
 REM   Run from C:\MerionIT, or as a lone file, and GitHub is reachable
 REM       -> pulls the latest scripts from GitHub into C:\MerionIT
 REM   No internet
@@ -44,6 +45,10 @@ if not exist "%SRC%setup\Step1-Accounts-Apps.ps1" goto :fromdest
 echo Copying %SRC% to %DEST% ...
 robocopy "%SRC%." "%DEST%" /E /XD .git /NFL /NDL /NJH /NP
 if %errorlevel% geq 8 goto :copyfail
+REM Only after a good copy: delete loose files in the top of %DEST% that this copy doesn't ship
+REM (old builds, hand copies). Files only, never folders. These four stay: the credentials file, the
+REM "already set up" marker, the update manifest and the install log. Same list as bootstrap.ps1.
+powershell.exe -NoProfile -Command "$src='%SRC%'; $keep='secrets.psd1','.setup-complete','.repo-manifest.txt','InstallLog.csv'; Get-ChildItem -LiteralPath '%DEST%' -File -Force | Where-Object { ($keep -notcontains $_.Name) -and -not (Test-Path -LiteralPath (Join-Path $src $_.Name)) } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force; Write-Host ('Removed old root file: ' + $_.Name) }"
 goto :launch
 
 :fromdest
