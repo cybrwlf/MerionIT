@@ -272,16 +272,22 @@ Get-Date -Format "yyyy-MM-dd HH:mm:ss" | Set-Content -Path $CompletionMarker
 
 $osName = (Get-ComputerInfo).OsName
 $stepTs = Get-Date -Format 'yyyy-MM-dd_HHmmss'
+# Step 2 runs for a long time, so the tech has to SEE its "[Step N of 16]" lines. Redirecting its output
+# to a file (what this used to do) left the console blank until the reminder opened. Now stdout is
+# shown and kept in the log; stderr still goes to its own .err.log, written by cmd so PowerShell never
+# touches it. This waits for Step 2 to finish (the reminder in Notepad is its last action).
+function Start-Step2([string]$Bat, [string]$Tag) {
+    $outLog = Join-Path $LogDir "$Tag-$stepTs.log"
+    $errLog = Join-Path $LogDir "$Tag-$stepTs.err.log"
+    Set-Location $MerionITRoot
+    & cmd.exe /c "`"$Bat`" 2>>`"$errLog`"" | Tee-Object -FilePath $outLog
+}
 if ($osName -like "*Windows 11*") {
     Write-Host "Detected Windows 11 - launching Step2..."
-    Start-Process "$MerionITRoot\setup\Step2-Tweaks-Win11.bat" -WorkingDirectory $MerionITRoot -NoNewWindow `
-        -RedirectStandardOutput (Join-Path $LogDir "Step2-Tweaks-Win11-$stepTs.log") `
-        -RedirectStandardError (Join-Path $LogDir "Step2-Tweaks-Win11-$stepTs.err.log")
+    Start-Step2 "$MerionITRoot\setup\Step2-Tweaks-Win11.bat" "Step2-Tweaks-Win11"
 } elseif ($osName -like "*Windows 10*") {
     Write-Host "Detected Windows 10 - launching Step2..."
-    Start-Process "$MerionITRoot\setup\Step2-Tweaks-Win10.bat" -WorkingDirectory $MerionITRoot -NoNewWindow `
-        -RedirectStandardOutput (Join-Path $LogDir "Step2-Tweaks-Win10-$stepTs.log") `
-        -RedirectStandardError (Join-Path $LogDir "Step2-Tweaks-Win10-$stepTs.err.log")
+    Start-Step2 "$MerionITRoot\setup\Step2-Tweaks-Win10.bat" "Step2-Tweaks-Win10"
 } else {
     Write-Warning "Unrecognized OS ('$osName') - launch Step2-Tweaks-Win11.bat or Step2-Tweaks-Win10.bat manually."
 }
