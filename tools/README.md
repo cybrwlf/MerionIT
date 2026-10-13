@@ -4,13 +4,45 @@ Operational scripts for machines that are **already deployed**. Everything in `t
 provisioning; everything here runs afterwards, usually through Kaseya, usually on a machine with a
 user sitting in front of it who should not be interrupted.
 
-Both scripts run fine as **SYSTEM with nobody logged on**. Neither prompts, opens a window, or
+These scripts run fine as **SYSTEM with nobody logged on**. None prompts, opens a window, or
 needs a user profile.
 
 | Script | Use it when |
 |---|---|
 | `Repair-MerionWindowsUpdate.ps1` | Auditing or fixing Windows Update policy. Safe fleet-wide. |
 | `Diag-WindowsUpdate.ps1` | One machine is stuck in an update loop. **Not** a fleet tool. |
+| `Set-MerionStandards.ps1` | Bringing an already-built machine up to the current provisioning standards (Location allowed, Calendar app removed) for every user, without re-running setup. Safe fleet-wide. |
+
+---
+
+## Set-MerionStandards.ps1
+
+Applies the provisioning changes that matter to machines that are already out there. Touches nothing
+else: no Start menu or taskbar reset, no accounts, no apps. `-ReportOnly` changes nothing. Every change
+is read back afterwards, and the exit code is `2` if anything is still out of standard.
+
+Current standards: **Location allowed** (machine-wide; per-user settings are not touched) and
+**Microsoft.M365Companions (the "Calendar" window) removed for all users** and deprovisioned. It can
+come back with an Office update; re-run if it does.
+
+**Known limit (Location):** the script sets and verifies registry values. On MRM8075-LT101 a registry-only
+fix held through a reboot, then the Geolocation service reset `SensorPermissionState` to 0 about 3 minutes
+after a new profile's first logon, and Settings showed Location Off. Turning it on once through Settings
+fixed it and it survived a reboot. Not yet known whether a new account on a machine in that state flips
+again, or how to set the Windows consent database from a script. After a run, confirm on one machine that
+Settings > Privacy & security > Location shows On.
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$d = "$env:SystemRoot\Temp\MerionIT"; $f = "$d\Set-MerionStandards.ps1"
+New-Item -ItemType Directory -Path $d -Force | Out-Null
+if (Test-Path $f) { Remove-Item $f -Force }
+Invoke-WebRequest 'https://raw.githubusercontent.com/cybrwlf/MerionIT/master/tools/Set-MerionStandards.ps1' -OutFile $f -UseBasicParsing
+powershell.exe -ExecutionPolicy Bypass -File $f -ReportOnly
+```
+
+Drop `-ReportOnly` to apply. Output ends with one line:
+`RESULT|<host>|location=ok/fixed/out-of-standard/STILL-BAD|calendar=ok/fixed/present/STILL-BAD/UNKNOWN|issues=N|stillbad=N|mode=report/apply|v=<version>`.
 
 ---
 
