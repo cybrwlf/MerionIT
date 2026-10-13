@@ -47,6 +47,36 @@ $LogDir = "C:\MerionIT\logs"
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 Start-Transcript -Path (Join-Path $LogDir "Fix-OfficeLanguages-$(Get-Date -Format 'yyyy-MM-dd_HHmmss').log") | Out-Null
 
+# Do nothing when the person signed in is a standard user. Setup can be started by a standard user who
+# types an admin account's credentials at the UAC prompt: the process is elevated, so #Requires above is
+# satisfied, but this script's fallback does a full Office scrub (SaRA) and then needs a working
+# reinstall. Found in the field 2026-10-13: it removed Office completely, and a standard user could not
+# put it back. Nobody signed in (Kaseya/SYSTEM) is fine and carries on as before.
+# If the signed-in user cannot be proven to be a local administrator, it skips. Skipping is the safe
+# direction: the machine keeps whatever Office it has, and this can be re-run later by an admin.
+function Get-InteractiveUserCheck {
+    $console = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).UserName
+    if (-not $console) { return [pscustomobject]@{ Ok = $true; Why = "no interactive user signed in" } }
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    if ($console -ieq $me) { return [pscustomobject]@{ Ok = $true; Why = "running as the signed-in user ($console), who is elevated" } }
+    try {
+        $sid = ([Security.Principal.NTAccount]$console).Translate([Security.Principal.SecurityIdentifier]).Value
+        $admins = @(Get-LocalGroupMember -Group 'Administrators' -ErrorAction Stop | ForEach-Object { $_.SID.Value })
+    } catch {
+        return [pscustomobject]@{ Ok = $false; Why = "could not confirm whether signed-in user '$console' is an administrator ($($_.Exception.Message))" }
+    }
+    if ($admins -contains $sid) { return [pscustomobject]@{ Ok = $true; Why = "signed-in user '$console' is a local administrator" } }
+    return [pscustomobject]@{ Ok = $false; Why = "signed-in user '$console' is not a local administrator" }
+}
+$userCheck = Get-InteractiveUserCheck
+if (-not $userCheck.Ok) {
+    Write-Warning "SKIPPING Office language fix: $($userCheck.Why)."
+    Write-Warning "Office was NOT touched. Run setup\Fix-OfficeLanguages.ps1 later while signed in as an administrator."
+    Stop-Transcript | Out-Null
+    return
+}
+Write-Host "Office language fix: proceeding ($($userCheck.Why))."
+
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
     Write-Error "winget is required to fetch the Office Deployment Tool. Aborting."
     return
