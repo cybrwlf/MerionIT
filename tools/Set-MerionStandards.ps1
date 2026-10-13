@@ -37,7 +37,7 @@ param(
     [switch]$ReportOnly
 )
 
-$ScriptVersion = '2026-10-12.1'
+$ScriptVersion = '2026-10-13.1'
 function Say($m) { Write-Output $m }
 
 $consentPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location'
@@ -54,17 +54,19 @@ function Get-LocationState {
     [pscustomobject]@{
         Consent         = (Get-ItemProperty $consentPath -ErrorAction SilentlyContinue).Value
         DisableLocation = (Get-ItemProperty $policyPath -ErrorAction SilentlyContinue).DisableLocation
-        Sensor          = (Get-ItemProperty $sensorPath -ErrorAction SilentlyContinue).SensorPermissionState
+        DisableProvider = (Get-ItemProperty $policyPath -ErrorAction SilentlyContinue).DisableWindowsLocationProvider
+        DisableScripting = (Get-ItemProperty $policyPath -ErrorAction SilentlyContinue).DisableLocationScripting
+        Sensor         = (Get-ItemProperty $sensorPath -ErrorAction SilentlyContinue).SensorPermissionState
         Status          = (Get-ItemProperty $lfsvcConfig -ErrorAction SilentlyContinue).Status
         StartType       = if ($svc) { [string]$svc.StartType } else { 'missing' }
     }
 }
 function Test-LocationOk($s) {
-    ($s.Consent -eq 'Allow') -and ($null -eq $s.DisableLocation) -and ($s.Sensor -eq 1) -and
+    ($s.Consent -eq 'Allow') -and ($null -eq $s.DisableLocation) -and ($null -eq $s.DisableProvider) -and ($null -eq $s.DisableScripting) -and ($s.Sensor -eq 1) -and
     ($s.Status -eq 1) -and ($s.StartType -ne 'Disabled')
 }
 function Format-LocationState($s) {
-    "consent=$($s.Consent) DisableLocation=$(if ($null -eq $s.DisableLocation) { 'not set' } else { $s.DisableLocation }) sensor=$($s.Sensor) lfsvcStatus=$($s.Status) lfsvc=$($s.StartType)"
+    "consent=$($s.Consent) DisableLocation=$(if ($null -eq $s.DisableLocation) { 'not set' } else { $s.DisableLocation }) DisableProvider=$(if ($null -eq $s.DisableProvider) { 'not set' } else { $s.DisableProvider }) DisableScripting=$(if ($null -eq $s.DisableScripting) { 'not set' } else { $s.DisableScripting }) sensor=$($s.Sensor) lfsvcStatus=$($s.Status) lfsvc=$($s.StartType)"
 }
 
 function Get-CalendarState {
@@ -100,7 +102,7 @@ if (Test-LocationOk $loc) {
         try {
             if (-not (Test-Path $consentPath)) { New-Item -Path $consentPath -Force | Out-Null }
             Set-ItemProperty -Path $consentPath -Name 'Value' -Type String -Value 'Allow' -ErrorAction Stop
-            Remove-ItemProperty -Path $policyPath -Name 'DisableLocation' -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $policyPath -Name 'DisableLocation','DisableWindowsLocationProvider','DisableLocationScripting' -ErrorAction SilentlyContinue
             if (-not (Test-Path $sensorPath)) { New-Item -Path $sensorPath -Force | Out-Null }
             Set-ItemProperty -Path $sensorPath -Name 'SensorPermissionState' -Type DWord -Value 1 -ErrorAction Stop
             if (-not (Test-Path $lfsvcConfig)) { New-Item -Path $lfsvcConfig -Force | Out-Null }

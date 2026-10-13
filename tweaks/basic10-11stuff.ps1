@@ -193,6 +193,9 @@ If (!(Test-Path $consentPath)) { New-Item -Path $consentPath -Force | Out-Null }
 Set-ItemProperty -Path $consentPath -Name "Value" -Type String -Value "Allow" -ErrorAction SilentlyContinue
 # A policy value of 1 overrides the consent setting above and greys out the toggle, so remove it.
 Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" -Name "DisableLocation" -ErrorAction SilentlyContinue
+# Same key also carries these two (seen set to 1 on MRM8035-LT301 and MRM8075-LT101); they turn the
+# Windows location provider and location scripting off, which contradicts "Location is allowed".
+Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" -Name "DisableWindowsLocationProvider","DisableLocationScripting" -ErrorAction SilentlyContinue
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Sensor\Overrides\{BFA794E4-F964-4FDB-90F6-51056BFE4B44}" -Name "SensorPermissionState" -Type DWord -Value 1 -ErrorAction SilentlyContinue
 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\lfsvc\Service\Configuration" -Name "Status" -Type DWord -Value 1 -ErrorAction SilentlyContinue
 Get-Service -Name lfsvc -ErrorAction SilentlyContinue | Set-Service -StartupType Manual -ErrorAction SilentlyContinue
