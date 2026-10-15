@@ -7,7 +7,7 @@ Syncs the repo into C:\MerionIT and launches Step1-Accounts-Apps.ps1. This is sa
 already-set-up machine (e.g. to pick up a newer version of the scripts) - it only ever touches
 files that are actually part of this repo. It tracks exactly which files it placed on disk
 (.repo-manifest.txt) and removes only those that no longer exist in the newer version being
-synced - it never touches InstallLog.csv, the backup\ folder that backup-userfiles.ps1 writes
+synced - it never touches InstallLog.csv, the backup\ folder that backup-userfiles-*.ps1 writes
 real user data into, or anything else not tracked by the repo.
 
 Full console output is transcribed to C:\MerionIT\logs\bootstrap-<timestamp>.log.

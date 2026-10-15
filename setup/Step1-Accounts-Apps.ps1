@@ -8,7 +8,7 @@ straight past the rename step.
 
 Agent check and app install both run automatically every time (no menu) - Agent-Install.ps1
 skips itself if the agent's already detected, and Install-Apps.ps1 updates anything already
-installed rather than reinstalling. backup-userfiles.ps1 is intentionally NOT called from here -
+installed rather than reinstalling. backup-userfiles-*.ps1 is intentionally NOT called from here -
 that's a manual-only action (run it directly when offboarding someone), never automatic.
 
 Once a full run finishes, this scrubs a handful of setup-only files that aren't needed once
