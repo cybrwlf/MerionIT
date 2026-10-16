@@ -16,5 +16,14 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
-powershell.exe -ExecutionPolicy Bypass -File "%~dp0manual\SingleUser.ps1" %*
+REM Prepare-NewUser creates the account (SingleUser.ps1) and then does what full setup would have done for
+REM them: seeds the Default profile, checks the machine, opens the checklist. Newest timestamped one wins.
+set "PREP="
+for /f "delims=" %%F in ('dir /b /o:n "%~dp0manual\Prepare-NewUser-*.ps1" 2^>nul') do set "PREP=%~dp0manual\%%F"
+if defined PREP (
+    powershell.exe -ExecutionPolicy Bypass -File "%PREP%" %*
+) else (
+    echo Prepare-NewUser script not found - creating the account only. Run Update-Scripts.bat.
+    powershell.exe -ExecutionPolicy Bypass -File "%~dp0manual\SingleUser.ps1" %*
+)
 pause

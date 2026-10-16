@@ -1,0 +1,35 @@
+======================================================
+ New user checklist
+ Opens once, the first time a new account signs in.
+======================================================
+
+Add-User already did: created the account (local admin), seeded the
+Default profile (Explorer options, taskbar buttons, tips off), set the
+taskbar pins for new profiles, and checked the machine. Details are in
+C:\MerionIT\logs\Prepare-NewUser-*.log.
+
+To change this list, edit manual\New-User-Reminder.txt in the repo.
+To read it again later: C:\MerionIT\manual\New-User-Reminder.txt
+
+With the new user signed in at the desk:
+
+[ ] Reset the placeholder password with the user. Never leave the temp
+    one. It is a memory aid for the tech, not their real password.
+[ ] Taskbar: File Explorer, Edge, Chrome, Word, Excel, Outlook (classic)
+    and Outlook (new) should be pinned. Snipping Tool is NOT pinned for
+    you: pin it by hand if they want it. If none of the pins appeared,
+    Windows ignored the layout: pin by hand and tell IT.
+[ ] File Explorer: open a folder deep in the tree. The left pane should
+    expand to it, and file extensions should show.
+[ ] Desktop: BGInfo text (computer name, IP, last boot) is showing. On a
+    brand-new profile it is wiped at first sign-in and comes back about
+    90 seconds after logon. Give it that long before worrying.
+[ ] Start menu: no Store or Solitaire pinned, All apps is visible.
+[ ] Settings > Privacy & security > Location: the device toggle is On.
+    "Let apps access your location" starts Off for every new user.
+    Turn it on if they need it.
+[ ] Sign in to Outlook and OneDrive with their Microsoft 365 account.
+    Confirm OneDrive is backing up Desktop, Documents and Pictures.
+[ ] Confirm this computer shows up in Kaseya.
+
+======================================================

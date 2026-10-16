@@ -1,6 +1,6 @@
 # Per-user tweaks don't reach accounts created after provisioning
 
-Design note. Not implemented yet.
+Design note. Option A is implemented for `Add-User.bat` as `tweaks\Set-DefaultUserProfile-*.ps1` (2026-10-16), tested with throwaway accounts. It is not yet called from Step 2 of full setup.
 
 ## The problem
 

@@ -55,4 +55,17 @@ $WinStartUp = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
 $StartupBat = Join-Path $WinStartUp "bginfo.bat"
 Set-Content -Path $StartupBat -Value "@echo off`r`n`"$($bgInfoExe.FullName)`" `"$BgInfoDir\BGinfo.bgi`" /silent /timer:0 /nolicprompt"
 
+# BGInfo second pass. On a brand-new profile's first sign-in Windows finishes its own first-run work
+# (taskbar layout, wallpaper) a few seconds AFTER the startup entry has run BGInfo, and that wipes the
+# background BGInfo just drew. Seen 2026-10-16: BGInfo wrote its image, Windows rewrote the wallpaper
+# 42 ms later and the wallpaper setting ended up empty. A second run 90 seconds after every logon draws it
+# again once things have settled. Runs as whoever signed in (Users group), hidden, no prompt.
+$bgTaskName = 'MerionIT BGInfo second pass'
+$bgAction = New-ScheduledTaskAction -Execute $bgInfoExe.FullName -Argument "`"$BgInfoDir\BGinfo.bgi`" /silent /timer:0 /nolicprompt"
+$bgTrigger = New-ScheduledTaskTrigger -AtLogOn
+$bgTrigger.Delay = 'PT90S'
+$bgPrincipal = New-ScheduledTaskPrincipal -GroupId 'S-1-5-32-545' -RunLevel Limited
+$bgSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+Register-ScheduledTask -TaskName $bgTaskName -Action $bgAction -Trigger $bgTrigger -Principal $bgPrincipal -Settings $bgSettings -Description 'Re-draws BGInfo 90 s after logon, after Windows first-run work on a new profile has finished.' -Force | Out-Null
+
 & $bgInfoExe.FullName "$BgInfoDir\BGinfo.bgi" /silent /timer:0 /nolicprompt
