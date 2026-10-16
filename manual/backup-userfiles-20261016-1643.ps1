@@ -47,8 +47,11 @@
         - deletes the local account,
         - clears that user from the sign-in screen cache (LogonUI SessionData and LastLoggedOn*,
           Winlogon LastUsedUsername). Windows leaves the name there after the account is gone,
+        - deletes the scheduled tasks that run as that account (OneDrive Startup/Reporting, Chrome's helper and the
+          like). Task Scheduler stores the run-as account by SID, so they outlive it and a match by name never sees them.
+          Each task's command is written to the log, so a custom job can be recreated under another account,
         - reads all of it back to confirm it is gone,
-        - reports (does not change) scheduled tasks and an auto-logon still naming the user.
+        - reports (does not change) an auto-logon still naming the user.
       Refused for the excluded names above and for a user who is still signed in.
       Asks before each deletion unless -Force is given. -WhatIf wins over -Force.
 
@@ -91,7 +94,7 @@ param(
     [switch]$IncludeDownloads
 )
 
-$ScriptVersion = '2026-10-15.1'
+$ScriptVersion = '2026-10-16.1'
 $Protected = 'operator*', 'administrator*', 'TempUser*', 'PCSadmin*', 'public*', 'scan*', 'default*', 'All Users'
 $Destination = $Destination.TrimEnd('\')
 $stamp = Get-Date -Format 'yyyy-MM-dd_HHmmss'
@@ -144,6 +147,29 @@ function Get-SignInCacheEntries([string]$Name) {
     $wp = Get-ItemProperty -LiteralPath $winlogon -ErrorAction SilentlyContinue
     if (& $isUser $wp.LastUsedUsername) {
         $found += [pscustomobject]@{ Kind = 'Value'; Path = $winlogon; Name = 'LastUsedUsername'; Label = "$winlogon [LastUsedUsername]" }
+    }
+    $found
+}
+
+# Scheduled tasks that run as the removed account. Per-user app tasks (OneDrive Startup/Reporting Task-<SID>,
+# Chrome's platform helper, ...) and anyone's custom job all end up here: Task Scheduler stores the run-as account by
+# SID, so they outlive the account and a match by user name never sees them. Matches on the SID in the stored
+# definition, or a task named after the SID.
+function Get-UserBoundTasks([string[]]$Sids) {
+    if (-not $Sids) { return @() }
+    $found = @()
+    foreach ($t in @(Get-ScheduledTask -ErrorAction SilentlyContinue)) {
+        $bound = [bool]($Sids | Where-Object { $t.TaskName.EndsWith($_) })
+        if (-not $bound) {
+            # While the account still exists, Get-ScheduledTask shows the run-as account by NAME, not SID, so read the
+            # stored definition (needed for an accurate -WhatIf).
+            try {
+                $x = [xml](Export-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -ErrorAction Stop)
+                $principalIds = @($x.Task.Principals.Principal | ForEach-Object { $_.UserId })
+                $bound = [bool]($Sids | Where-Object { $principalIds -contains $_ })
+            } catch { }
+        }
+        if ($bound) { $found += $t }
     }
     $found
 }
@@ -463,6 +489,21 @@ if ($Remove) {
             }
         }
 
+        # Scheduled tasks bound to the account's SID are deleted: they cannot run for anyone else.
+        $removedSids = @(@($targets | ForEach-Object { $_.Sid }) + $(if ($account) { $account.SID.Value }) | Where-Object { $_ } | Select-Object -Unique)
+        foreach ($tk in @(Get-UserBoundTasks $removedSids)) {
+            try {
+                if (($Force -and -not $dryRun) -or $PSCmdlet.ShouldProcess("$($tk.TaskPath)$($tk.TaskName)", 'Delete scheduled task bound to the removed account')) {
+                    $tkCmd = ($tk.Actions | Select-Object -First 1 | ForEach-Object { "$($_.Execute) $($_.Arguments)".Trim() })
+                    Unregister-ScheduledTask -TaskName $tk.TaskName -TaskPath $tk.TaskPath -Confirm:$false -ErrorAction Stop
+                    Say "   Removed scheduled task $($tk.TaskPath)$($tk.TaskName)  (ran: $tkCmd)"
+                }
+            } catch {
+                Say "   ERROR removing scheduled task $($tk.TaskPath)$($tk.TaskName): $($_.Exception.Message)"
+                $removeProblem = $true
+            }
+        }
+
         if (-not $dryRun) {
             # Read it back. "No error" is not the test.
             foreach ($t in $targets) {
@@ -483,12 +524,13 @@ if ($Remove) {
                 Say "   STILL PRESENT: sign-in entry $($e.Label)"
                 $removeProblem = $true
             }
-            if (-not $removeProblem) { Say "   Verified: no profile folder, no ProfileList entry, no local account, no sign-in screen entry for $UserName." }
+            foreach ($tk in @(Get-UserBoundTasks $removedSids)) {
+                Say "   STILL PRESENT: scheduled task $($tk.TaskPath)$($tk.TaskName)"
+                $removeProblem = $true
+            }
+            if (-not $removeProblem) { Say "   Verified: no profile folder, no ProfileList entry, no local account, no sign-in screen entry, no scheduled task bound to it for $UserName." }
 
-            # Reported, not changed: someone has to decide what these should run as.
-            $tasks = @(Get-ScheduledTask -ErrorAction SilentlyContinue |
-                Where-Object { $_.Principal.UserId -ieq $UserName -or $_.Principal.UserId -like "*\$UserName" })
-            foreach ($task in $tasks) { Say "   NOTE: scheduled task still set to run as this user: $($task.TaskPath)$($task.TaskName)" }
+            # Reported, not changed: someone has to decide what auto-logon should use instead.
             $winlogon = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -ErrorAction SilentlyContinue
             if ($winlogon.AutoAdminLogon -eq '1' -and $winlogon.DefaultUserName -ieq $UserName) {
                 Say '   NOTE: Windows auto-logon is still configured for this user (Winlogon AutoAdminLogon / DefaultUserName).'
