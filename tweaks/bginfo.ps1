@@ -30,6 +30,27 @@ if (-not $bgInfoExe) {
 
 Copy-Item -Path $ConfigFile -Destination "$BgInfoDir\BGinfo.bgi" -Force
 
+# winget leaves Bginfo.exe with an ACL that names only the account that ran setup, Administrators
+# and SYSTEM, and C:\ hands Authenticated Users Modify to everything else. A local admin runs with a
+# filtered token at logon, so it cannot start Bginfo.exe: the startup bat then fails silently for
+# every user except the setup account (seen 2026-10-15 on a test machine: a newly added local admin never got the
+# background). Meanwhile any signed-in user could edit the .bgi that runs at everyone's logon.
+# Set it explicitly: SYSTEM and Administrators full control, Users read and execute, nothing else.
+# SIDs rather than names so it works on any language build. Grant on the folder, drop the folder's
+# inheritance, then reset every file under it to inherit from the folder. Do not use /T on the
+# grant: tested, it left the .bgi with an empty ACL and never gave Bginfo.exe the Users entry.
+& icacls.exe $BgInfoDir /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
+& icacls.exe $BgInfoDir /inheritance:r | Out-Null
+& icacls.exe "$BgInfoDir\*" /reset /T /C | Out-Null
+$usersCanRun = (Get-Acl $bgInfoExe.FullName).Access | Where-Object {
+    $_.AccessControlType -eq 'Allow' -and
+    $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-32-545' -and
+    ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::ExecuteFile)
+}
+if (-not $usersCanRun) {
+    Write-Warning "Users still cannot run $($bgInfoExe.FullName). BGInfo will only start for accounts named in its ACL."
+}
+
 $WinStartUp = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
 $StartupBat = Join-Path $WinStartUp "bginfo.bat"
 Set-Content -Path $StartupBat -Value "@echo off`r`n`"$($bgInfoExe.FullName)`" `"$BgInfoDir\BGinfo.bgi`" /silent /timer:0 /nolicprompt"
