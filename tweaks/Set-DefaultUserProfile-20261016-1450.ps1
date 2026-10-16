@@ -44,8 +44,8 @@
 
 .PARAMETER PinPlacement
     Replace (default): the pin list is exactly File Explorer, Edge, Chrome, Word, Excel, Outlook (classic) and
-    Outlook (new), so the Microsoft Store pin is dropped. Add: keep Windows' own default pins and append
-    Chrome, Word, Excel and the two Outlooks.
+    Outlook (new) and Snipping Tool, so the Microsoft Store pin is dropped. Add: keep Windows' own default pins and append
+    Chrome, Word, Excel, the two Outlooks and Snipping Tool.
 
 .PARAMETER LayoutMethod
     DefaultProfile (default): merge a CustomTaskbarLayoutCollection into
@@ -71,7 +71,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ScriptVersion = '2026-10-16.4'
+$ScriptVersion = '2026-10-16.5'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $problems = 0
 
@@ -334,7 +334,8 @@ if ($SkipTaskbarLayout -or $UserName) {
         @{ Name = 'Word';              Type = 'DesktopApp'; Attr = 'DesktopApplicationLinkPath'; Value = '%ALLUSERSPROFILE%\Microsoft\Windows\Start Menu\Programs\Word.lnk' },
         @{ Name = 'Excel';             Type = 'DesktopApp'; Attr = 'DesktopApplicationLinkPath'; Value = '%ALLUSERSPROFILE%\Microsoft\Windows\Start Menu\Programs\Excel.lnk' },
         @{ Name = 'Outlook (classic)'; Type = 'DesktopApp'; Attr = 'DesktopApplicationLinkPath'; Value = '%ALLUSERSPROFILE%\Microsoft\Windows\Start Menu\Programs\Outlook (classic).lnk' },
-        @{ Name = 'Outlook (new)';     Type = 'UWA';        Attr = 'AppUserModelID';             Value = 'Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows'; Package = 'Microsoft.OutlookForWindows' }
+        @{ Name = 'Outlook (new)';     Type = 'UWA';        Attr = 'AppUserModelID';             Value = 'Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows'; Package = 'Microsoft.OutlookForWindows' },
+        @{ Name = 'Snipping Tool';     Type = 'UWA';        Attr = 'AppUserModelID';             Value = 'Microsoft.ScreenSketch_8wekyb3d8bbwe!App'; Package = 'Microsoft.ScreenSketch' }
     )
 
     $pins = @()
