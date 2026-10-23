@@ -113,3 +113,14 @@ script, `winget-install`). Only ever referenced in a comment inside `Install-App
 manual fallback - never actually invoked by anything, and `Install-Apps.ps1` now has its own
 tested `Wait-ForWinget` logic that handles this directly. Not verified to still work (the
 third-party script it depends on hasn't been checked since this was written).
+
+## backup-userfiles.ps1 and backup-userfiles-20261013-2319.ps1 - superseded
+
+Archived 2026-10-23, replaced by `manual/backup-userfiles-20261016-1643.ps1`. The 1013 version did
+everything 1016 does except removing the scheduled tasks bound to the removed account (it only
+reported them), and it had a narrower protected-name list (`defaultuser*` instead of `default*` and
+`All Users`). The original `backup-userfiles.ps1` is a 17-line copy loop into
+`C:\MerionIT\backup\users\<name>\`: it takes every profile subfolder except a skip list, so it also
+grabbed Videos, Favorites and other folders in the profile root. 1016 copies only Desktop, Documents,
+Pictures and the OneDrive folders (Downloads with `-IncludeDownloads`). If Videos or Favorites ever
+need backing up again, that is the gap.
