@@ -10,19 +10,28 @@ param(
     [string]$ConfigFile = "$PSScriptRoot\bginfo.bgi"
 )
 
-Get-NetAdapterBinding | Where-Object ComponentID -EQ 'ms_tcpip6' | Disable-NetAdapterBinding -ComponentID 'ms_tcpip6'
-
-if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Write-Warning "winget not available - cannot install BGInfo automatically. Install it manually from https://learn.microsoft.com/sysinternals/downloads/bginfo"
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Warning "bginfo.ps1 needs an elevated PowerShell (Run as administrator). C:\BGinfo is writable by Administrators and SYSTEM only. Nothing was changed."
     return
 }
 
+Get-NetAdapterBinding | Where-Object ComponentID -EQ 'ms_tcpip6' | Disable-NetAdapterBinding -ComponentID 'ms_tcpip6'
+
 $BgInfoDir = "C:\BGinfo"
-New-Item -ItemType Directory -Path $BgInfoDir -Force | Out-Null
 
-winget install --id Microsoft.Sysinternals.BGInfo --source winget --silent --accept-package-agreements --accept-source-agreements --location $BgInfoDir
-
+# Only call winget when BGInfo isn't already in the folder. winget re-downloads and hash-checks the
+# package every run, and Microsoft's package hash has drifted from the live download before ("Installer
+# hash does not match"). The hash check stays on; an existing copy just doesn't need it.
 $bgInfoExe = Get-ChildItem -Path $BgInfoDir -Filter "Bginfo*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $bgInfoExe) {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Warning "winget not available - cannot install BGInfo automatically. Install it manually from https://learn.microsoft.com/sysinternals/downloads/bginfo"
+        return
+    }
+    New-Item -ItemType Directory -Path $BgInfoDir -Force | Out-Null
+    winget install --id Microsoft.Sysinternals.BGInfo --source winget --silent --accept-package-agreements --accept-source-agreements --location $BgInfoDir
+    $bgInfoExe = Get-ChildItem -Path $BgInfoDir -Filter "Bginfo*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+}
 if (-not $bgInfoExe) {
     Write-Error "BGInfo executable not found after winget install."
     return
