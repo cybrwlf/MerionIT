@@ -14,7 +14,7 @@ Parameters are optional and passed straight through to RenamePC.ps1; anything om
 Setup.bat is not touched and does not call this.
 #>
 param(
-    [ValidateSet('MRM', 'MRQ', 'MRP', 'MIT')]
+    [ValidateSet('MRM', 'MRQ', 'MRP', 'MIP', 'MIT')]
     [string]$Company,
     [ValidatePattern('^\d{4}$')]
     [string]$Property,
@@ -38,9 +38,10 @@ if (-not $Company) {
     Write-Host "1  Merion (MRM)"
     Write-Host "2  Merion HQ (MRQ)"
     Write-Host "3  Merion Realty Partners (MRP)"
-    Write-Host "4  Loaner (MIT)"
+    Write-Host "4  Mainline (MIP)"
+    Write-Host "5  Loaner (MIT)"
     $Company = switch (Read-Host "Select number corresponding to which company") {
-        '1' { 'MRM' } '2' { 'MRQ' } '3' { 'MRP' } '4' { 'MIT' }
+        '1' { 'MRM' } '2' { 'MRQ' } '3' { 'MRP' } '4' { 'MIP' } '5' { 'MIT' }
         default { Write-Error "Not a valid choice." }
     }
 }

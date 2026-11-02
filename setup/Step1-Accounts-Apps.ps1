@@ -27,7 +27,7 @@ C:\MerionIT\logs\Step1-Accounts-Apps-<timestamp>.log. A rename reboot cuts the t
 starts a fresh one when this script relaunches after restart.
 
 Reassigning an already-named machine to a new user: the rename gate below fires on any name that
-doesn't start with MRM/MRQ/MRP/MIT (DESKTOP-xxxx, LAPTOP-xxxx, anything else a vendor ships), so a
+doesn't start with MRM/MRQ/MRP/MIP/MIT (DESKTOP-xxxx, LAPTOP-xxxx, anything else a vendor ships), so a
 machine that already has a Merion name would never be renamed through this script - it would fall
 straight through to account setup and keep the old user's name forever.
 Pass -ForceRename (plus the RenamePC.ps1 parameters you want) to take that path deliberately.
@@ -37,10 +37,10 @@ over Kaseya/SSH with no interactive console.
 param(
     # Normally inferred from the computer name. Needed with -ForceRename when the current name
     # is a factory one, and lets a machine move between companies.
-    [ValidateSet('MRM', 'MRQ', 'MRP')]
+    [ValidateSet('MRM', 'MRQ', 'MRP', 'MIP')]
     [string]$Company,
 
-    # Run the rename step even though this machine already has an MRM/MRQ/MRP name.
+    # Run the rename step even though this machine already has an MRM/MRQ/MRP/MIP name.
     [switch]$ForceRename,
 
     # Passed straight through to RenamePC.ps1 - see its param block for meanings.
@@ -58,7 +58,16 @@ param(
     # needs -DeleteSecrets, deliberately, so a credential file is never removed by implication.
     [switch]$Unattended,
 
-    [switch]$DeleteSecrets
+    [switch]$DeleteSecrets,
+
+    # Skip every app download: BGInfo, the standard app set and Office. For slow internet. Whatever is
+    # already on the machine is left alone and the rest of setup carries on. Run Install-Apps.ps1 and
+    # Fix-OfficeLanguages.ps1 later without it. The Kaseya agent check is not affected.
+    [switch]$SkipInstalls,
+
+    # If winget says "Installer hash does not match", retry that install with winget's hash check
+    # overridden. Off by default. Passed to bginfo.ps1, Install-Apps.ps1 and Fix-OfficeLanguages.ps1.
+    [switch]$AllowHashMismatch
 )
 
 
@@ -107,7 +116,7 @@ $prefix = $computerName.Substring(0, [Math]::Min(3, $computerName.Length))
 # LAPTOP-xxxx, Computer-1234, a vendor/OEM name, a typo) is treated as a factory name and gets
 # renamed. MIT is listed only so a loaner already named by RenamePC.ps1 -Company MIT isn't
 # renamed again; Select-Company below has no MIT option.
-$namedPrefixes = @('MRM', 'MRQ', 'MRP', 'MIT')
+$namedPrefixes = @('MRM', 'MRQ', 'MRP', 'MIP', 'MIT')
 
 function Select-Company {
     Write-Host ""
@@ -115,11 +124,13 @@ function Select-Company {
     Write-Host "1  Merion (MRM)"
     Write-Host "2  Merion HQ (MRQ)"
     Write-Host "3  Merion Realty Partners (MRP)"
+    Write-Host "4  Mainline (MIP)"
     $choice = Read-Host "Select number corresponding to which company"
     switch ($choice) {
         '1' { return 'MRM' }
         '2' { return 'MRQ' }
         '3' { return 'MRP' }
+        '4' { return 'MIP' }
         default { Write-Warning "'$choice' is not valid, try again"; return Select-Company }
     }
 }
@@ -130,7 +141,7 @@ if ($namedPrefixes -notcontains $prefix -or $ForceRename) {
     if ($ForceRename) {
         Write-Host "-ForceRename specified - renaming '$computerName' even though it isn't a factory name..."
     } else {
-        Write-Host "Computer name '$computerName' isn't an MRM/MRQ/MRP name - renaming PC..."
+        Write-Host "Computer name '$computerName' isn't an MRM/MRQ/MRP/MIP name - renaming PC..."
     }
 
     if ($Company) {
@@ -182,6 +193,7 @@ $accountCompany = switch -Regex ($prefix) {
     '^MRM$' { 'MRM' }
     '^MRQ$' { 'MRQ' }
     '^MRP$' { 'MRP' }
+    '^MIP$' { 'MIP' }
     default { $null }
 }
 
@@ -219,9 +231,11 @@ if ($accountCompany) {
     Write-Warning "Computer name prefix '$prefix' has no company - creating pcsadmin only."
 }
 
+$installArgs = @{ SkipInstall = $SkipInstalls; AllowHashMismatch = $AllowHashMismatch }
+
 & "$MerionITRoot\setup\DefaultAccounts.ps1" @accountArgs
 if (Test-Path "$MerionITRoot\tweaks\bginfo.ps1") {
-    & "$MerionITRoot\tweaks\bginfo.ps1"
+    & "$MerionITRoot\tweaks\bginfo.ps1" @installArgs
 }
 
 # Agent check - Agent-Install.ps1 detects an existing install and skips itself automatically.
@@ -229,12 +243,12 @@ if (Test-Path "$MerionITRoot\tweaks\bginfo.ps1") {
 
 # Apps always run - every machine should have the full standard set. Install-Apps.ps1 detects
 # anything already present (even if installed manually) and updates it instead of reinstalling.
-& "$MerionITRoot\setup\Install-Apps.ps1"
+& "$MerionITRoot\setup\Install-Apps.ps1" @installArgs
 
 # Office always runs too - Fix-OfficeLanguages.ps1 already detects its own three cases (no Office
 # -> install fresh, extra language packs -> clean up, already correct -> no-op), so it's safe to
 # call unconditionally every time rather than relying on a tech to remember it's needed.
-& "$MerionITRoot\setup\Fix-OfficeLanguages.ps1"
+& "$MerionITRoot\setup\Fix-OfficeLanguages.ps1" @installArgs
 
 if (Test-Path "$MerionITRoot\secrets.psd1") {
     if ($DeleteSecrets) {

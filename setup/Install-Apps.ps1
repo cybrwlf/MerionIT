@@ -26,9 +26,17 @@ leak into the pipeline) and logged to C:\MerionIT\InstallLog.csv in a Details co
 failure is actually diagnosable from the log afterward instead of a bare "failed" with no reason.
 
 Zoom and Logitech Unifying are intentionally not included - both retired/no-longer-needed for Merion.
+
+-SkipInstall: touch nothing. No installs, no updates, no Scoop bootstrap, no winget. For slow internet;
+run the script again later without it.
+-AllowHashMismatch: if winget refuses an install with "Installer hash does not match", retry that one
+app with winget's hash check overridden. Off by default. The override setting is switched back off
+right after each retry.
 #>
 param(
-    [string]$LogPath = "C:\MerionIT\InstallLog.csv"
+    [string]$LogPath = "C:\MerionIT\InstallLog.csv",
+    [switch]$SkipInstall,
+    [switch]$AllowHashMismatch
 )
 
 # ScoopId is $null where there's no real, official ScoopInstaller/Extras manifest for the app -
@@ -232,6 +240,33 @@ function Test-AdobeAcrobatConflict {
     return [bool]$found
 }
 
+function Invoke-WingetInstall {
+    <#
+    Returns the output and the exit code together, because switching the override setting back off
+    runs another winget command and would overwrite $LASTEXITCODE before the caller read it.
+    #>
+    param([string]$WingetId)
+    $wingetArgs = @('install', '--id', $WingetId, '--source', 'winget', '--silent', '--accept-package-agreements', '--accept-source-agreements')
+    $out = & winget @wingetArgs 2>&1 | Out-String
+    $exit = $LASTEXITCODE
+    if ($exit -ne 0 -and $AllowHashMismatch -and $out -match 'hash does not match') {
+        Write-Warning "winget says the installer hash does not match for $WingetId. -AllowHashMismatch was given, so retrying with the hash check overridden."
+        & winget settings --enable InstallerHashOverride | Out-Null
+        try {
+            $out += "`n--- retry with hash check overridden ---`n" + (& winget @wingetArgs --ignore-security-hash 2>&1 | Out-String)
+            $exit = $LASTEXITCODE
+        } finally {
+            & winget settings --disable InstallerHashOverride | Out-Null
+        }
+    }
+    return [pscustomobject]@{ Output = $out; ExitCode = $exit }
+}
+
+if ($SkipInstall) {
+    Write-Host "-SkipInstall: skipping every app install and update. Run Install-Apps.ps1 again later without it."
+    return
+}
+
 Wait-ForWinget
 
 $results = foreach ($app in $Apps) {
@@ -280,8 +315,9 @@ $results = foreach ($app in $Apps) {
         $uninstallCmd = "scoop uninstall $($app.ScoopId) --global"
     } else {
         Write-Host "Installing $($app.Name) via winget..."
-        $details = & winget install --id $app.WingetId --source winget --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-String
-        if ($LASTEXITCODE -eq 0) {
+        $install = Invoke-WingetInstall -WingetId $app.WingetId
+        $details = $install.Output
+        if ($install.ExitCode -eq 0) {
             $success = $true
             $method = "winget"
             $uninstallCmd = "winget uninstall --id $($app.WingetId)"

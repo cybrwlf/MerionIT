@@ -37,8 +37,19 @@ Full console output is transcribed to C:\MerionIT\logs\Fix-OfficeLanguages-<time
 #>
 param(
     [string[]]$KeepLanguage = @("en-us"),
-    [string]$ProductId = "O365ProPlusRetail"
+    [string]$ProductId = "O365ProPlusRetail",
+    # Do nothing at all. This script can install Office (several GB) or strip and reinstall it, so on
+    # slow internet it is skipped whole rather than half-run. Run it again later without this.
+    [switch]$SkipInstall,
+    # Retry the Office Deployment Tool download with winget's hash check overridden if winget says
+    # "Installer hash does not match". Off by default.
+    [switch]$AllowHashMismatch
 )
+
+if ($SkipInstall) {
+    Write-Host "-SkipInstall: skipping the Office language fix and any Office install. Run Fix-OfficeLanguages.ps1 again later without it."
+    return
+}
 
 $OdtDir = "C:\MerionIT\ODT"
 New-Item -ItemType Directory -Path $OdtDir -Force | Out-Null
@@ -87,7 +98,17 @@ function Get-OdtSetupExe {
     $exe = Get-ChildItem -Path $OdtDir -Filter "setup.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($exe) { return $exe }
     Write-Host "Installing Office Deployment Tool via winget..."
-    winget install --id Microsoft.OfficeDeploymentTool --source winget --silent --accept-package-agreements --accept-source-agreements --location $OdtDir
+    $wingetOut = winget install --id Microsoft.OfficeDeploymentTool --source winget --silent --accept-package-agreements --accept-source-agreements --location $OdtDir 2>&1 | Out-String
+    Write-Host $wingetOut
+    if ($AllowHashMismatch -and $wingetOut -match 'hash does not match') {
+        Write-Warning "winget says the installer hash does not match. -AllowHashMismatch was given, so retrying with winget's hash check overridden."
+        winget settings --enable InstallerHashOverride | Out-Null
+        try {
+            winget install --id Microsoft.OfficeDeploymentTool --source winget --silent --accept-package-agreements --accept-source-agreements --ignore-security-hash --location $OdtDir
+        } finally {
+            winget settings --disable InstallerHashOverride | Out-Null
+        }
+    }
     return (Get-ChildItem -Path $OdtDir -Filter "setup.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1)
 }
 

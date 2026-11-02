@@ -12,10 +12,11 @@ the account is being created fresh or already existed). Per-company behavior:
     MRQ named hires to have admin rights on their own machine.
   - MRP: pcsadmin only today - named-user creation intentionally left disabled, matching the original
     DefaultMRPaccounts.ps1 (uncomment when MRP starts needing individual named accounts).
+  - MIP (Mainline): pcsadmin only, decided 2026-11-02.
 #>
 param(
     # Optional: with no company, only pcsadmin is created (every company gets it).
-    [ValidateSet('MRM', 'MRQ', 'MRP')]
+    [ValidateSet('MRM', 'MRQ', 'MRP', 'MIP')]
     [string]$Company,
 
     [string]$SecretsPath = "C:\MerionIT\secrets.psd1",
@@ -95,6 +96,9 @@ switch ($Company) {
         # original DefaultMRPaccounts.ps1. Uncomment when MRP starts needing individual named accounts:
         # $Uname = Read-Host "Enter Username (i.e. jdoe)"
         # CreateOrUpdateAccount -username $Uname -password $secrets.SingleUserTempPassword -description "MRP User Account" -addToAdministrators $false
+    }
+    'MIP' {
+        # Mainline: pcsadmin only (created above), no other local account.
     }
 }
 

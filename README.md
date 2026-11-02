@@ -47,12 +47,14 @@ Every stage — `bootstrap.ps1`, Step 1, Step 2, and `Fix-OfficeLanguages.ps1` �
 ## The order things run
 
 1. `Setup.bat` — gets the files into `C:\MerionIT`.
-2. `setup\Step1-Accounts-Apps.ps1` — rename (if the name isn't an MRM/MRQ/MRP/MIT one), `pcsadmin` + company accounts, RMM agent check, apps, Office. A rename reboots the machine and Step 1 re-launches itself afterwards (RunOnce).
+2. `setup\Step1-Accounts-Apps.ps1` — rename (if the name isn't an MRM/MRQ/MRP/MIP/MIT one), `pcsadmin` + company accounts, RMM agent check, apps, Office. A rename reboots the machine and Step 1 re-launches itself afterwards (RunOnce).
 3. `setup\Step2-Tweaks-Win11.bat` **or** `setup\Step2-Tweaks-Win10.bat` — Step 1 picks the one that matches the OS and launches it. They are alternatives, not a sequence.
 
 `Step1-Accounts-Apps.ps1` runs the account setup, an RMM agent check (skips itself if the agent's already installed), the full app install/update, and Office setup/language cleanup — every machine should have the same apps and a clean English-only Office, so those always fire. Nothing else needs picking from a menu.
 
 `pcsadmin` is created on every run, whatever the computer name. The company account (`TempUser` for MRM, the named user for MRQ) needs the company, which comes from the name prefix. For MRM the 4-digit property code is read from the computer name (`MRM8075-...` → `8075`) and only asked for if the name doesn't carry one.
+
+**Mainline (MIP)** never has properties. The 4 digits in the name are the user's phone extension (`MIP3004-LT301`), and setup creates `pcsadmin` only. Kaseya agent, apps, Office and tweaks are the same as Merion.
 
 **Manual-only, never automatic** (all in `manual\`):
 - `backup-userfiles-20261016-1643.ps1` — only run this by hand when offboarding someone. Backs up Desktop, Documents, Pictures and the OneDrive folder (including folders OneDrive redirected), verifies the copy, and with `-Remove` deletes the profile, the local account, the stale sign-in screen entry and the per-user scheduled tasks (OneDrive and the like) bound to the account. Run it with `-WhatIf` first (`powershell.exe -ExecutionPolicy Bypass -File C:\MerionIT\manual\backup-userfiles-20261016-1643.ps1 <username> -Remove -WhatIf`). Replaces `backup-userfiles.ps1`, `backup-userfiles-20261013-2319.ps1` and `backup-userfiles-20261015-1104.ps1`, which are removed or superseded.
@@ -70,8 +72,8 @@ Once a full setup run finishes, Step 1 deletes the setup-only files that aren't 
 - `bootstrap.ps1` — the online engine behind `Setup.bat`/`Update-Scripts.bat`. Stays in the root because the `raw.githubusercontent.com/.../bootstrap.ps1` URL is used by one-liners and `Jarvis\tools\setup-new-machine.bat`.
 - `setup/` — everything the first-time pipeline runs:
   - `Step1-Accounts-Apps.ps1`, `Step2-Tweaks-Win11.bat`, `Step2-Tweaks-Win10.bat` — the pipeline itself.
-  - `RenamePC.ps1` — computer naming (MRM/MRQ/MRP). Desktop-vs-laptop is auto-detected for every company (battery/chassis signals, see `research/Test-MachineDetection.ps1`) with a manual fallback if ambiguous. Purchase year is also auto-detected (CPU generation vs. OS install date) for every company, with a manual fallback for large/undetermined gaps (likely a rebuild); an unattended run (`-Force`) on a CPU the table doesn't know needs an explicit `-Year`. Scrubbed after setup completes.
-  - `DefaultAccounts.ps1` — creates `pcsadmin` everywhere, plus `TempUser` (MRM) or the named user (MRQ). Scrubbed after setup completes.
+  - `RenamePC.ps1` — computer naming (MRM/MRQ/MRP/MIP, plus MIT loaners). Desktop-vs-laptop is auto-detected for every company (battery/chassis signals, see `research/Test-MachineDetection.ps1`) with a manual fallback if ambiguous. Purchase year is also auto-detected (CPU generation vs. OS install date) for every company, with a manual fallback for large/undetermined gaps (likely a rebuild); an unattended run (`-Force`) on a CPU the table doesn't know needs an explicit `-Year`. Scrubbed after setup completes.
+  - `DefaultAccounts.ps1` — creates `pcsadmin` everywhere, plus `TempUser` (MRM) or the named user (MRQ). MRP and MIP get `pcsadmin` only. Scrubbed after setup completes.
   - `MITUser.ps1` — annual MIT-event loaner account (separate, one-off use). Scrubbed after setup completes.
   - `Install-Apps.ps1` — winget-first/Scoop-fallback app installer/updater, logs to `C:\MerionIT\InstallLog.csv`.
   - `Fix-OfficeLanguages.ps1` — installs Office fresh if missing, strips extra Dell OEM Office language packs if present, no-ops if already correct. Runs automatically every time.

@@ -118,11 +118,11 @@ if (-not $matchRow) {
 
 # --- Audit the machine's CURRENT name against the detected signals ---
 
-$KnownMerionCompanies = 'MRM', 'MRQ', 'MRP', 'MIT'
+$KnownMerionCompanies = 'MRM', 'MRQ', 'MRP', 'MIP', 'MIT'
 
 $currentName = $cs.Name
-# Company is any 3-letter code, not just the known MerionIT ones - sibling companies (e.g. MIP,
-# MRA) use the same Company+Property-TypeYear0Unit format but aren't part of MerionIT itself.
+# Company is any 3-letter code, not just the known MerionIT ones - sibling companies (e.g. MRA)
+# use the same Company+Property-TypeYear0Unit format but aren't part of MerionIT itself.
 # The structural audit (type/year) should still run for them; only the "is this a MerionIT
 # company" check below is informational.
 $nameMatch = [regex]::Match($currentName, '^(?<company>[A-Za-z]{3})(?<property>[A-Za-z0-9]+)-(?<type>DT|LT)(?<yeardigit>\d)0(?<unit>\d+)$')
@@ -142,7 +142,7 @@ if (-not $nameParsed) {
     $namingAuditNotes += "Computer name '$currentName' doesn't match the expected Company+Property-TypeYear0Unit pattern at all - can't audit."
 } else {
     if (-not $isKnownCompany) {
-        $namingAuditNotes += "Company code '$companyCode' is not a recognized MerionIT company (MRM/MRQ/MRP/MIT) - likely a sibling company using the same naming format. Type/year audit below still applies; treat this note as informational only."
+        $namingAuditNotes += "Company code '$companyCode' is not a recognized MerionIT company (MRM/MRQ/MRP/MIP/MIT) - likely a sibling company using the same naming format. Type/year audit below still applies; treat this note as informational only."
     }
     $nameTypeMatches = ($nameType -eq $inferredType)
     if (-not $nameTypeMatches) {

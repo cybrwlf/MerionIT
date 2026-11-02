@@ -5,9 +5,16 @@ binary in it - this fetches it from Microsoft instead). Uses the .bgi config com
 this script (bginfo.bgi). A light-theme variant (bginfo-white.bgi) was never actually wired up
 to anything - archived at archive/bginfo-white.bgi if that's wanted later
 (pass -ConfigFile "$PSScriptRoot\..\archive\bginfo-white.bgi" to use it).
+
+-AllowHashMismatch: if winget refuses the install with "Installer hash does not match", retry once with
+winget's hash check overridden. Off by default, because that check is what protects the machine from a
+bad installer. The override setting is switched back off afterwards.
+-SkipInstall: never call winget. Uses the BGInfo already in C:\BGinfo, and stops if there isn't one.
 #>
 param(
-    [string]$ConfigFile = "$PSScriptRoot\bginfo.bgi"
+    [string]$ConfigFile = "$PSScriptRoot\bginfo.bgi",
+    [switch]$AllowHashMismatch,
+    [switch]$SkipInstall
 )
 
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -23,14 +30,31 @@ $BgInfoDir = "C:\BGinfo"
 # package every run, and Microsoft's package hash has drifted from the live download before ("Installer
 # hash does not match"). The hash check stays on; an existing copy just doesn't need it.
 $bgInfoExe = Get-ChildItem -Path $BgInfoDir -Filter "Bginfo*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $bgInfoExe -and $SkipInstall) {
+    Write-Warning "-SkipInstall was given and there is no Bginfo*.exe in $BgInfoDir. BGInfo was not set up."
+    return
+}
 if (-not $bgInfoExe) {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         Write-Warning "winget not available - cannot install BGInfo automatically. Install it manually from https://learn.microsoft.com/sysinternals/downloads/bginfo"
         return
     }
     New-Item -ItemType Directory -Path $BgInfoDir -Force | Out-Null
-    winget install --id Microsoft.Sysinternals.BGInfo --source winget --silent --accept-package-agreements --accept-source-agreements --location $BgInfoDir
+    $wingetOut = winget install --id Microsoft.Sysinternals.BGInfo --source winget --silent --accept-package-agreements --accept-source-agreements --location $BgInfoDir 2>&1 | Out-String
+    Write-Host $wingetOut
     $bgInfoExe = Get-ChildItem -Path $BgInfoDir -Filter "Bginfo*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $bgInfoExe -and $AllowHashMismatch -and $wingetOut -match 'hash does not match') {
+        # --ignore-security-hash only works while winget's InstallerHashOverride setting is on (admin only).
+        # Turn it on for this one install and always turn it back off.
+        Write-Warning "winget says the installer hash does not match. -AllowHashMismatch was given, so retrying with winget's hash check overridden."
+        winget settings --enable InstallerHashOverride | Out-Null
+        try {
+            winget install --id Microsoft.Sysinternals.BGInfo --source winget --silent --accept-package-agreements --accept-source-agreements --ignore-security-hash --location $BgInfoDir
+        } finally {
+            winget settings --disable InstallerHashOverride | Out-Null
+        }
+        $bgInfoExe = Get-ChildItem -Path $BgInfoDir -Filter "Bginfo*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
 }
 if (-not $bgInfoExe) {
     Write-Error "BGInfo executable not found after winget install."

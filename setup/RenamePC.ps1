@@ -4,6 +4,8 @@ Consolidated replacement for MRMrenamePC.ps1 / MRQrenamePC.ps1 / MRPrenamePC.ps1
 Behavior per company:
   - MRM / MRQ / MRP: prompt for a 4-digit property/phone-extension code.
   - MIT: property is always "Loan" (annual MIT-event loaner laptops), no property prompt.
+  - MIP (Mainline): never has properties, so it prompts for the user's 4-digit phone extension only.
+    Added 2026-11-02; MIP3004-LT301 (research/Year-Detection-Decision.md) already used this format.
 
 Desktop-vs-laptop is auto-detected for every company (battery presence + chassis type, same
 signals validated in research/Test-MachineDetection.ps1 - matched 100% of known machine types
@@ -36,10 +38,10 @@ being handed to a new user - which the old flow couldn't do remotely at all.
 #>
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('MRM', 'MRQ', 'MRP', 'MIT')]
+    [ValidateSet('MRM', 'MRQ', 'MRP', 'MIT', 'MIP')]
     [string]$Company,
 
-    # 4-digit property code / phone extension. Ignored for MIT (always "Loan").
+    # 4-digit property code / phone extension (MIP: always the extension). Ignored for MIT (always "Loan").
     [ValidatePattern('^\d{4}$')]
     [string]$Property,
 
@@ -70,6 +72,8 @@ if ($Company -eq 'MIT') {
 } elseif ($Property) {
     $property = $Property
     Write-Host "Property/extension: $property (from -Property)"
+} elseif ($Company -eq 'MIP') {
+    $property = Read-Host "Phone Extension Number? [4 digit]"
 } else {
     $property = Read-Host "Property or Phone Extension Number? [4 digit]"
 }
@@ -150,7 +154,7 @@ $GenYearTable = @{
 #   4. Manual prompt.
 function Get-YearFromExistingName {
     param([string]$Name)
-    $m = [regex]::Match($Name, '^(?:MRM|MRQ|MRP)\d{4}-(?:DT|LT)(\d)0\d+$')
+    $m = [regex]::Match($Name, '^(?:MRM|MRQ|MRP|MIP)\d{4}-(?:DT|LT)(\d)0\d+$')
     if (-not $m.Success) { return $null }
     # The name only carries the year's last digit, so resolve it to the most recent year
     # ending in that digit that isn't in the future.
