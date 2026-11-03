@@ -11,6 +11,7 @@ needs a user profile.
 |---|---|
 | `Repair-MerionWindowsUpdate.ps1` | Auditing or fixing Windows Update policy. Safe fleet-wide. |
 | `Diag-WindowsUpdate.ps1` | One machine is stuck in an update loop. **Not** a fleet tool. |
+| `Test-MerionBuild.ps1` | A build just finished and you want PASS/WARN/FAIL for everything setup should have done (name, Office, BGInfo, apps, Dell, Windows Update, Kaseya). Changes nothing. Exit `2` on any FAIL, ends with a `RESULT\|` line. |
 | `Set-MerionStandards.ps1` | Bringing an already-built machine up to the current provisioning standards (Location allowed, Calendar app removed) for every user, without re-running setup. Safe fleet-wide. |
 
 ---
@@ -128,6 +129,11 @@ Get-Content .\sweep-output.txt | Select-String '^RESULT\|' | ForEach-Object {
 **It will not suppress Windows Update driver offers on a Dell whose DCU is broken or absent.** That
 would leave the machine with no driver path at all. It reports `ACTION NEEDED` and leaves Windows
 Update available until someone runs `tweaks\vendor-drivers.ps1`.
+
+**It will not touch the AU subkey on Mainline (MIP) machines.** Kaseya patch management owns Windows
+Update there and writes `NoAutoUpdate=1` / `AUOptions=1` itself once the machine is in its Mainline
+group (seen on MIP3004-LT601, 2026-11-03). The list is `$KaseyaPatchedPrefixes` at the top of the
+script, and `Test-MerionBuild.ps1` carries the same list.
 
 **It will not guess at CPU support.** Intel Core generation 8 and newer is the documented Windows 11
 boundary and is classified automatically. Xeon, Pentium, Celeron, Atom and AMD return `CPU-unknown`

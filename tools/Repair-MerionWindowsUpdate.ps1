@@ -40,6 +40,12 @@
        pile up in the pending list and produce a permanent, false "restart required". On every
        other vendor WU is the ONLY driver path and must stay free to offer them.
 
+    EXCEPTION, MAINLINE (MIP): Kaseya patch management owns Windows Update there (confirmed by Ricardo
+       2026-11-03). Seen on MIP3004-LT601: minutes after the machine was moved into its Mainline group,
+       Kaseya wrote NoAutoUpdate=1, AUOptions=1, NoAutoRebootWithLoggedOnUsers=1 and
+       AllowMUUpdateService=1 under AU. On those machines the AU subkey is expected and is left alone;
+       removing it would fight Kaseya. The prefix list is $KaseyaPatchedPrefixes below.
+
     VENDOR LOGIC, and why it is conditional rather than blanket:
        Dell + working dcu-cli   -> ExcludeWUDriversInQualityUpdate = 1   (DCU has drivers covered)
        Dell + broken/absent DCU -> leave WU drivers ON, and say so loudly. Suppressing WU drivers
@@ -99,7 +105,12 @@ param(
 # fleet sweep can prove which version produced a given result - raw.githubusercontent.com caches
 # for several minutes, and a stale copy on one endpoint otherwise looks like a real difference
 # between machines. Cost us a confused round trip on 2026-09-23.
-$ScriptVersion = '2026-09-30.2'
+$ScriptVersion = '2026-11-03.1'
+
+# Companies whose Windows Update is run by Kaseya patch management. Their AU subkey is Kaseya's and
+# is not touched. See EXCEPTION, MAINLINE in the header.
+$KaseyaPatchedPrefixes = @('MIP')
+$kaseyaPatched = [bool]($KaseyaPatchedPrefixes | Where-Object { $env:COMPUTERNAME -like "$_*" })
 
 # -ReportOnly wins. A sweep must never install software because someone added a flag they did not
 # think about, and silently ignoring the combination would be worse than saying so.
@@ -167,7 +178,9 @@ if (Test-Path $au) {
 # ------------------------------------------- 1. the AU subkey should not exist
 # Everything Merion needs lives directly under WindowsUpdate. The AU subkey only ever holds the
 # values that broke things: NoAutoUpdate, AUOptions, NoAutoRebootWithLoggedOnUsers.
-if (Test-Path $au) {
+if ($kaseyaPatched) {
+    Say "OK   AU subkey left alone: Kaseya patch management owns Windows Update on $(($KaseyaPatchedPrefixes) -join '/') machines (present: $(Test-Path $au))"
+} elseif (Test-Path $au) {
     $auVals = Get-ItemProperty $au
     if ($auVals.NoAutoUpdate -eq 1 -or $auVals.AUOptions -eq 1) {
         $issues.Add("CRITICAL: automatic updates disabled (NoAutoUpdate=$($auVals.NoAutoUpdate), AUOptions=$($auVals.AUOptions)) - this machine has not been patching")
@@ -513,7 +526,7 @@ if (-not $ReportOnly) {
     Say ""
     Say "--- AFTER ---"
     (Get-ItemProperty $wu | Select-Object * -Exclude PS*) | Format-List | Out-String | Write-Output
-    Say "  AU subkey present: $(Test-Path $au)   (should be False)"
+    Say "  AU subkey present: $(Test-Path $au)   (should be False$(if ($kaseyaPatched) { ', except Kaseya-patched machines' }))"
 }
 
 # Single machine-readable line, for collecting across a fleet sweep.

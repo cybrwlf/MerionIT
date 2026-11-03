@@ -25,6 +25,10 @@ Tested against a real Dell OEM image 2026-07-27, several rounds of real bugs fou
   flag (confirmed directly against the winget-pkgs manifest). It returned instantly with no output
   and installed nothing. Replaced with an ODT "Add" config we control, same tool already used for
   removal.
+- 2026-11-03 (MIP3004-LT601): "is Office installed" only checked that the ClickToRun\Configuration
+  key existed. A scrub left the key behind empty, so the script said "nothing to do" with no Office
+  on the machine. Now it needs a product listed and WINWORD.EXE on disk, checks the same after every
+  install, and adds a reminder line if Office still isn't there.
 
 Still unconfirmed: whether the ODT targeted-removal path actually clears extra languages once given
 enough time (vs. always falling back to the full scrub) - needs a re-test.
@@ -93,6 +97,33 @@ if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
     return
 }
 
+$ReminderPath = "C:\MerionIT\setup\Manual-Steps-Reminder.txt"
+function Add-ReminderIfMissing {
+    # Inserts before the closing "====" banner line so dynamic reminders land inside the
+    # checklist box instead of trailing after it.
+    param([string]$Line)
+    if (-not (Test-Path $ReminderPath)) { return }
+    if (Select-String -Path $ReminderPath -Pattern ([regex]::Escape($Line)) -Quiet) { return }
+    $content = @(Get-Content -Path $ReminderPath)
+    if ($content.Count -gt 0 -and $content[-1] -match '^=+$') {
+        $newContent = $content[0..($content.Count - 2)] + $Line + $content[-1]
+    } else {
+        $newContent = $content + $Line
+    }
+    Set-Content -Path $ReminderPath -Value $newContent
+}
+
+$c2rKey = "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration"
+# Office counts as installed only if Click-to-Run lists a product AND Word is on disk. Found on
+# MIP3004-LT601 2026-11-03: a GetHelpCmd scrub left an empty ClickToRun\Configuration key behind,
+# so the old "key exists" check said Office was there and the reinstall was skipped.
+function Test-OfficeInstalled {
+    $cfg = Get-ItemProperty -Path $c2rKey -ErrorAction SilentlyContinue
+    if (-not $cfg -or -not $cfg.ProductReleaseIds) { return $false }
+    $root = if ($cfg.InstallationPath) { $cfg.InstallationPath } else { "$env:ProgramFiles\Microsoft Office" }
+    return (Test-Path (Join-Path $root "root\Office16\WINWORD.EXE"))
+}
+
 function Get-OdtSetupExe {
     param([string]$OdtDir)
     $exe = Get-ChildItem -Path $OdtDir -Filter "setup.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -122,6 +153,7 @@ function Install-OfficeEnglishOnly {
     $setupExe = Get-OdtSetupExe -OdtDir $OdtDir
     if (-not $setupExe) {
         Write-Error "Could not find ODT setup.exe after install - install Office manually."
+        Add-ReminderIfMissing "[ ] Office did not install - run C:\MerionIT\setup\Fix-OfficeLanguages.ps1 as an admin"
         return
     }
     $addConfig = @"
@@ -137,11 +169,16 @@ function Install-OfficeEnglishOnly {
     Set-Content -Path $addConfigPath -Value $addConfig
     Write-Host "Installing Office ($Language only) via ODT..."
     & $setupExe.FullName /configure $addConfigPath
+    # setup.exe /configure blocks until Click-to-Run finishes, so check the result right away.
+    if (Test-OfficeInstalled) {
+        Write-Host "Office installed: WINWORD.EXE found."
+    } else {
+        Write-Warning "ODT finished but Office is not installed (no product in Click-to-Run or no WINWORD.EXE)."
+        Add-ReminderIfMissing "[ ] Office did not install - run C:\MerionIT\setup\Fix-OfficeLanguages.ps1 as an admin"
+    }
 }
 
-$c2rKey = "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration"
-$config = Get-ItemProperty -Path $c2rKey -ErrorAction SilentlyContinue
-if (-not $config) {
+if (-not (Test-OfficeInstalled)) {
     # No Office at all isn't automatically "nothing to do" - a previous run of this same script can
     # leave a machine in exactly this state (full scrub via GetHelpCmd, reinstall never completed).
     Write-Host "No Office installation detected - installing Office fresh..."
@@ -169,6 +206,7 @@ $langsToRemove = @($installedLangs | Where-Object { $KeepLanguage -notcontains $
 
 if (-not $langsToRemove) {
     Write-Host "No extra language packs detected beyond $($KeepLanguage -join ', ') - nothing to do."
+    Stop-Transcript | Out-Null
     return
 }
 
