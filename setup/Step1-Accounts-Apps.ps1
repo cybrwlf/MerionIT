@@ -161,9 +161,23 @@ if ($namedPrefixes -notcontains $prefix -or $ForceRename) {
     if ($Unattended) { $renameArgs['Force'] = $true }
     if ($NoReboot) { $renameArgs['NoReboot'] = $true }
 
+    # The Kaseya agent keeps the name it registered with, so a machine renamed with the agent already
+    # on it gets the agent reinstalled (/r /w) once the new name is live. The marker holds the old name
+    # and survives the reboot; Agent-Install.ps1 acts on it and clears it (decided 2026-11-03).
+    if (Get-Service | Where-Object { $_.DisplayName -like "*Kaseya Agent*" }) {
+        Set-Content -Path "$MerionITRoot\.agent-repair-pending" -Value $computerName
+        Write-Host "Kaseya agent is installed - it will be reinstalled after the rename so it picks up the new name."
+    }
+
     & "$MerionITRoot\setup\RenamePC.ps1" -Company $renameCompany @renameArgs
     # RenamePC.ps1 reboots the machine (rename requires it) - nothing more to do this session.
     return
+}
+
+# A rename on a machine that already had the agent (see the rename block above) leaves this marker.
+# Handled here, before the .setup-complete prompt below, so answering N there can't skip the repair.
+if (Test-Path "$MerionITRoot\.agent-repair-pending") {
+    & "$MerionITRoot\setup\Agent-Install.ps1"
 }
 
 if (Test-Path $CompletionMarker) {

@@ -4,7 +4,8 @@ Vendor-specific driver handling.
 Merion buys Dell, but acquired properties arrive with whatever they had, so this branches on the
 manufacturer rather than assuming.
 
-  Dell           remove SupportAssist, install Dell Command Update, tame it, run it
+  Dell           remove Dell Optimizer, Purchased Apps and SupportAssist, install Dell Command
+                 Update, tame it, run it. Dell Trusted Device is kept on purpose.
   anything else  no-op - Windows Update already handles drivers, configured in basic10-11stuff.ps1
 
 That is not a cop-out for the non-Dell case. Verified on MRM8065-DT201 2026-09-22: with the WU
@@ -124,6 +125,54 @@ if ($manufacturer -notmatch 'Dell') {
 $uninstallKeys = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
                  'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
 
+# Uninstalls a program by its exact DisplayName, then checks the registry to see whether it really
+# went. Returns $true only when no entry is left. The debloat scripts piped Get-Package into
+# Uninstall-Package and printed "Successfully uninstalled" either way; Dell Optimizer survived every
+# build like that (seen 2026-11-02 on MIP3004-LT601) because it is an InstallShield package whose
+# UninstallString has no silent switch.
+# Per entry, in order: QuietUninstallString (Burn bundles carry one), msiexec /x for MSIs, then
+# UninstallString plus $SilentArgs. Exact names only, on purpose: Dell Command Update, Dell Core
+# Services and Dell Trusted Device (kept, decided 2026-11-03) must never be caught by a wildcard.
+function Remove-ProgramByName {
+    param([string]$Name, [string]$SilentArgs, [int]$WaitSeconds = 600)
+    $entries = @(Get-ItemProperty $uninstallKeys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq $Name })
+    if (-not $entries) {
+        Write-Host "    $Name : not installed"
+        return $true
+    }
+    # Re-read after every uninstall: removing a bundle also removes the MSI entry it owns.
+    for ($attempt = 1; $attempt -le 3 -and $entries; $attempt++) {
+        $e = $entries | Where-Object QuietUninstallString | Select-Object -First 1
+        if (-not $e) { $e = $entries[0] }
+        if ($e.QuietUninstallString)     { $cmd = $e.QuietUninstallString }
+        elseif ($e.WindowsInstaller -eq 1) { $cmd = "msiexec.exe /x $($e.PSChildName) /qn /norestart" }
+        elseif ($SilentArgs)             { $cmd = "$($e.UninstallString) $SilentArgs" }
+        else {
+            Write-Warning "    $Name : no silent uninstall known for this entry - skipped."
+            break
+        }
+        Write-Host "    $Name $($e.DisplayVersion): $cmd"
+        $p = Start-Process cmd.exe -ArgumentList "/c `"$cmd`"" -WindowStyle Hidden -PassThru
+        $null = $p.Handle  # PowerShell 5.1 reports no ExitCode later unless the handle is opened now
+        if ($p.WaitForExit($WaitSeconds * 1000)) { Write-Host "    exit: $($p.ExitCode)" }
+        else { Write-Warning "    uninstaller still running after $WaitSeconds s - not waiting any longer." }
+        # InstallShield's -runfromtemp hands off to a copy of itself and returns at once, so the exit
+        # code proves nothing. Poll for this entry's key to disappear instead.
+        $waited = 0
+        while ((Test-Path $e.PSPath) -and $waited -lt 180) { Start-Sleep -Seconds 10; $waited += 10 }
+        $entries = @(Get-ItemProperty $uninstallKeys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq $Name })
+        # The same entry surviving means this command doesn't work here. Running it again would only
+        # stack up another hung uninstaller, so stop and let the reminder line take over.
+        if (Test-Path $e.PSPath) { break }
+    }
+    if ($entries) {
+        Write-Warning "    $Name : STILL INSTALLED"
+        return $false
+    }
+    Write-Host "    $Name : removed (confirmed in the registry)"
+    return $true
+}
+
 function Remove-DellSupportAssist {
 Write-Host "  Removing Dell SupportAssist (the consumer nagware)..."
 $saAppx = Get-AppxPackage -AllUsers -Name "*DellSupportAssist*" -ErrorAction SilentlyContinue
@@ -140,16 +189,27 @@ if ($saAppx) {
     $stillThere = Get-AppxPackage -AllUsers -Name "*DellSupportAssist*" -ErrorAction SilentlyContinue
     Write-Host "    appx: $(if ($stillThere) { 'STILL PRESENT' } else { 'removed' })"
 }
-$saMsi = Get-ItemProperty $uninstallKeys -ErrorAction SilentlyContinue |
-         Where-Object { $_.DisplayName -eq 'Dell SupportAssist' } | Select-Object -First 1
-if ($saMsi) {
-    $p = Start-Process msiexec.exe -ArgumentList @('/x', $saMsi.PSChildName, '/qn', '/norestart') -Wait -PassThru
-    Write-Host "    msi uninstall exit: $($p.ExitCode)   (0 or 3010 = success)"
+# Remediation and the OS Recovery Plugin ship as Burn bundles beside the main MSI, and only the MSI
+# used to be removed. Seen 2026-11-02 on MIP3004-LT601: both still installed, services running.
+foreach ($n in 'Dell SupportAssist OS Recovery Plugin for Dell Update', 'Dell SupportAssist Remediation', 'Dell SupportAssist') {
+    if (-not (Remove-ProgramByName -Name $n)) {
+        Add-ReminderIfMissing "[ ] Uninstall $n (Settings > Apps) - silent uninstall didn't take"
+    }
 }
 }
 
 # --- Dell Command Update -----------------------------------------------------------
-$dcuCli = "${env:ProgramFiles(x86)}\Dell\CommandUpdate\dcu-cli.exe"
+# DCU 5.7.0 Universal installs to Program Files (seen 2026-11-02 on MIP3004-LT601), older builds to
+# Program Files (x86). Checking only x86 made a working DCU look absent: the script then removed
+# Dell Core Services as "orphaned", gave up, and never reached the SupportAssist removal.
+function Get-DcuCli {
+    foreach ($root in $env:ProgramFiles, ${env:ProgramFiles(x86)}) {
+        $path = Join-Path $root 'Dell\CommandUpdate\dcu-cli.exe'
+        if (Test-Path $path) { return $path }
+    }
+    return (Join-Path ${env:ProgramFiles(x86)} 'Dell\CommandUpdate\dcu-cli.exe')
+}
+$dcuCli = Get-DcuCli
 
 if (-not (Test-Path $dcuCli)) {
     # DCU 5.7.2 requires .NET Desktop Runtime 10.0 >= 10.0.8. Its installer refuses without it,
@@ -266,6 +326,8 @@ if (-not (Test-Path $dcuCli)) {
         Add-ReminderIfMissing "[ ] Dell Command Update not installed - no installer available. Stage it in C:\MerionIT\apps or pass -DcuInstallerUrl."
     }
 
+    # Re-resolve: a fresh install may land in either Program Files folder.
+    $dcuCli = Get-DcuCli
     if (-not (Test-Path $dcuCli)) {
         Write-Warning "  dcu-cli.exe still not present after install - giving up."
         Add-ReminderIfMissing "[ ] Dell Command Update install failed - install manually and rerun tweaks\vendor-drivers.ps1"
@@ -277,6 +339,29 @@ Write-Host "  dcu-cli: $((Get-Item $dcuCli).VersionInfo.ProductVersion)"
 
 # DCU exists and this machine now has a driver path, so the nagware can go. Deliberately after the
 # install, never before - see the note above Remove-DellSupportAssist.
+#
+# Dell Optimizer too, but only when Dell Core Services is installed. Seen 2026-11-03 on
+# MIP3004-LT601: Core Services had been removed (the old x86-only path check made DCU look absent),
+# so DCU 5.7.0 was running on the DellTechHub and DellClientManagementService that came with
+# Optimizer's AppCore package. Removing Optimizer took AppCore, UserSubAgent and Purchased Apps with
+# it, and dcu-cli then failed with exit 2 on everything until DCU was reinstalled. The health probe
+# below catches a break either way.
+Write-Host "  Removing Dell OEM extras..."
+$coreServices = Get-ItemProperty $uninstallKeys -ErrorAction SilentlyContinue |
+                Where-Object { $_.DisplayName -eq 'Dell Core Services' }
+if ($coreServices) {
+    # InstallShield, no QuietUninstallString: '-silent' is added to Dell's own '-remove -runfromtemp'.
+    if (-not (Remove-ProgramByName -Name 'Dell Optimizer' -SilentArgs '-silent')) {
+        Add-ReminderIfMissing "[ ] Uninstall Dell Optimizer (Settings > Apps) - silent uninstall didn't take"
+    }
+    # The successor to Dell Digital Delivery, which the debloat lists already target.
+    if (-not (Remove-ProgramByName -Name 'Dell/Alienware Purchased Apps')) {
+        Add-ReminderIfMissing "[ ] Uninstall Dell/Alienware Purchased Apps (Settings > Apps) - silent uninstall didn't take"
+    }
+} elseif (Get-ItemProperty $uninstallKeys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -in 'Dell Optimizer', 'Dell/Alienware Purchased Apps' }) {
+    Write-Warning "  Dell Core Services is not installed - leaving Dell Optimizer in place, DCU may be running on its services."
+    Add-ReminderIfMissing "[ ] Dell Optimizer left in place: Dell Core Services is missing. Reinstall DCU from C:\MerionIT\apps (brings Core Services), then rerun tweaks\vendor-drivers.ps1"
+}
 Remove-DellSupportAssist
 
 # Health probe. Test-Path on dcu-cli.exe is NOT sufficient: a partial uninstall leaves the binary

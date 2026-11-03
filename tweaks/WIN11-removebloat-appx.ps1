@@ -124,10 +124,10 @@ $AppXBloatware = @(
 # installs it and silences it - so removing it here just breaks the driver path. Observed on
 # MRM8035-LT101 2026-09-23: step 4 uninstalled the DCU that step 14 then could not find, leaving
 # the machine with SupportAssist gone AND DCU gone, i.e. no OEM driver tooling at all.
-# Dell Optimizer stays on the list; it is separate from DCU and is still unwanted.
+# Dell Optimizer is not here either: Uninstall-Package cannot remove it silently (InstallShield, no
+# silent switch in its uninstall string), so tweaks\vendor-drivers.ps1 removes it and verifies it.
 $TraditionalBloatwarePrograms = @(
 	"*DellDigitalDelivery*"
-	"*optimizer*"
 	"*digialdelivery*"
 	"HPJumpStarts"
 	"HPPCHardwareDiagnosticsWindows"
@@ -160,8 +160,17 @@ Write-Host "Removing Traditional Bloatware Programs..."
 foreach ($ProgramName in $TraditionalBloatwarePrograms) {
     Write-Host "Attempting to uninstall program: '$ProgramName'..."
     Try {
+        # Report what is actually left afterwards, not that the command ran.
+        if (-not (Get-Package -Name $ProgramName -ErrorAction SilentlyContinue)) {
+            Write-Host "Not installed: '$ProgramName'"
+            continue
+        }
         Get-Package -Name $ProgramName -ErrorAction SilentlyContinue | Uninstall-Package -AllVersions -Force -ErrorAction SilentlyContinue
-        Write-Host "Successfully uninstalled: '$ProgramName'"
+        if (Get-Package -Name $ProgramName -ErrorAction SilentlyContinue) {
+            Write-Warning "Still installed after uninstall: '$ProgramName'"
+        } else {
+            Write-Host "Uninstalled: '$ProgramName'"
+        }
     }
     Catch {
         Write-Warning "Failed to uninstall: '$ProgramName'. Error: $($_.Exception.Message)"
@@ -169,10 +178,6 @@ foreach ($ProgramName in $TraditionalBloatwarePrograms) {
 }
 
 # Additional checks for common leftover bloatware keywords
-if (Get-Package -Name "*optimizer*" -ErrorAction SilentlyContinue) {
-    Write-Host "Found and uninstalling remaining '*optimizer*' programs..."
-    Get-Package -Name "*optimizer*" | Uninstall-Package -Force -ErrorAction SilentlyContinue
-}
 # Catches Dell Command | Configure, Dell Command | Monitor, etc. Dell Command | Update is
 # excluded on purpose - see the note on $TraditionalBloatwarePrograms above.
 $leftoverCommand = Get-Package -Name "*command*" -ErrorAction SilentlyContinue |

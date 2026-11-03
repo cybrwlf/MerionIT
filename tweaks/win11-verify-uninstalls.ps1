@@ -10,10 +10,14 @@ by Dell's own background services like Dell Core Services/SupportAssist).
 Tries once more (in case a dependency-order issue blocked the first pass), then - instead of
 silently giving up - adds a line to Manual-Steps-Reminder.txt for anything still found so the
 tech doesn't need to go hunting for what didn't take.
+
+Dell Optimizer is no longer checked here (2026-11-03). The real cause turned out to be that
+Uninstall-Package cannot remove it silently, not Dell services restoring it. tweaks\vendor-drivers.ps1
+now removes it with its own silent switch, verifies it, and adds the reminder line if it survives.
 #>
 
 Write-Host "======================================="
-Write-Host "Verifying Xbox / Dell Optimizer / WhatsApp are actually gone..."
+Write-Host "Verifying Xbox / WhatsApp are actually gone..."
 Write-Host "======================================="
 
 $ReminderPath = "C:\MerionIT\setup\Manual-Steps-Reminder.txt"
@@ -36,7 +40,6 @@ function Add-ReminderIfMissing {
 Get-AppxPackage -AllUsers -Name "Microsoft.GamingApp" -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
 Get-AppxPackage -AllUsers -Name "Microsoft.XboxGameCallableUI" -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
 Get-AppxPackage -AllUsers -Name "*WhatsApp*" -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
-Get-Package -Name "*optimizer*" -ErrorAction SilentlyContinue | Uninstall-Package -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 5
 
 if ((Get-AppxPackage -AllUsers -Name "*xbox*" -ErrorAction SilentlyContinue) -or (Get-AppxPackage -AllUsers -Name "Microsoft.GamingApp" -ErrorAction SilentlyContinue)) {
@@ -47,11 +50,6 @@ if ((Get-AppxPackage -AllUsers -Name "*xbox*" -ErrorAction SilentlyContinue) -or
 if (Get-AppxPackage -AllUsers -Name "*WhatsApp*" -ErrorAction SilentlyContinue) {
     Write-Warning "WhatsApp still present - added to Manual-Steps-Reminder.txt."
     Add-ReminderIfMissing "[ ] Uninstall WhatsApp (Settings > Apps) - automated removal didn't fully take"
-}
-
-if (Get-Package -Name "*optimizer*" -ErrorAction SilentlyContinue) {
-    Write-Warning "Dell Optimizer still present - added to Manual-Steps-Reminder.txt."
-    Add-ReminderIfMissing "[ ] Uninstall Dell Optimizer (Settings > Apps) - Dell's own services may keep restoring it"
 }
 
 Write-Host "======================================="

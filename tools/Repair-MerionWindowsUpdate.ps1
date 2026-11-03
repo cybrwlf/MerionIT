@@ -208,7 +208,16 @@ foreach ($v in @(
 
 
 # ------------------------------------------ 3. driver offers, vendor-dependent
-$dcuCli    = "${env:ProgramFiles(x86)}\Dell\CommandUpdate\dcu-cli.exe"
+# DCU 5.7.0 Universal installs to Program Files, older builds to Program Files (x86). Checking only
+# x86 reported a working DCU as absent on MIP3004-LT601 (2026-11-02).
+function Get-DcuCli {
+    foreach ($root in $env:ProgramFiles, ${env:ProgramFiles(x86)}) {
+        $path = Join-Path $root 'Dell\CommandUpdate\dcu-cli.exe'
+        if (Test-Path $path) { return $path }
+    }
+    return (Join-Path ${env:ProgramFiles(x86)} 'Dell\CommandUpdate\dcu-cli.exe')
+}
+$dcuCli    = Get-DcuCli
 $dcuHealth = 'absent'
 $dcuOk     = $false
 if (Test-Path $dcuCli) {
@@ -269,6 +278,7 @@ if ($isDell) {
 
         # Presence is not health, same rule as everywhere else in this script. Re-probe rather than
         # assuming the install worked, then set the policy only if dcu-cli actually answers.
+        $dcuCli = Get-DcuCli
         if ($ok -and (Test-Path $dcuCli)) {
             & $dcuCli /configure -scheduleManual -silent 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 2) {

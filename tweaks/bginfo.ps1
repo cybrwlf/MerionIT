@@ -10,6 +10,10 @@ to anything - archived at archive/bginfo-white.bgi if that's wanted later
 winget's hash check overridden. Off by default, because that check is what protects the machine from a
 bad installer. The override setting is switched back off afterwards.
 -SkipInstall: never call winget. Uses the BGInfo already in C:\BGinfo, and stops if there isn't one.
+
+If winget is missing or doesn't produce Bginfo*.exe, falls back to downloading BGInfo.zip straight from
+download.sysinternals.com. That copy is only used if every .exe in it carries a valid Microsoft
+Authenticode signature: the package hash can go stale, the signature can't.
 #>
 param(
     [string]$ConfigFile = "$PSScriptRoot\bginfo.bgi",
@@ -34,30 +38,69 @@ if (-not $bgInfoExe -and $SkipInstall) {
     Write-Warning "-SkipInstall was given and there is no Bginfo*.exe in $BgInfoDir. BGInfo was not set up."
     return
 }
-if (-not $bgInfoExe) {
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Warning "winget not available - cannot install BGInfo automatically. Install it manually from https://learn.microsoft.com/sysinternals/downloads/bginfo"
-        return
-    }
-    New-Item -ItemType Directory -Path $BgInfoDir -Force | Out-Null
-    $wingetOut = winget install --id Microsoft.Sysinternals.BGInfo --source winget --silent --accept-package-agreements --accept-source-agreements --location $BgInfoDir 2>&1 | Out-String
-    Write-Host $wingetOut
-    $bgInfoExe = Get-ChildItem -Path $BgInfoDir -Filter "Bginfo*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $bgInfoExe -and $AllowHashMismatch -and $wingetOut -match 'hash does not match') {
-        # --ignore-security-hash only works while winget's InstallerHashOverride setting is on (admin only).
-        # Turn it on for this one install and always turn it back off.
-        Write-Warning "winget says the installer hash does not match. -AllowHashMismatch was given, so retrying with winget's hash check overridden."
-        winget settings --enable InstallerHashOverride | Out-Null
-        try {
-            winget install --id Microsoft.Sysinternals.BGInfo --source winget --silent --accept-package-agreements --accept-source-agreements --ignore-security-hash --location $BgInfoDir
-        } finally {
-            winget settings --disable InstallerHashOverride | Out-Null
+# Fallback when winget can't deliver BGInfo. Seen 2026-11-02 on MIP3004-LT601: winget's manifest was
+# 4.33 while download.sysinternals.com already served 4.34 at the same URL, so winget failed with
+# "Installer hash does not match" (and refuses the override when run as admin). Everything in the zip
+# is staged in TEMP and only copied into $Dir if every .exe is validly signed by Microsoft.
+function Install-BgInfoDirect {
+    param([string]$Dir)
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $zip = Join-Path $env:TEMP "BGInfo-$(Get-Random).zip"
+    $stage = Join-Path $env:TEMP "BGInfo-stage-$(Get-Random)"
+    try {
+        Invoke-WebRequest -Uri 'https://download.sysinternals.com/files/BGInfo.zip' -OutFile $zip -UseBasicParsing -ErrorAction Stop
+        Expand-Archive -Path $zip -DestinationPath $stage -Force -ErrorAction Stop
+        $exes = @(Get-ChildItem -Path $stage -Filter '*.exe' -Recurse)
+        if (-not $exes) {
+            Write-Warning "BGInfo.zip had no .exe in it. Not installed."
+            return
         }
+        foreach ($exe in $exes) {
+            $sig = Get-AuthenticodeSignature -FilePath $exe.FullName
+            if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+                Write-Warning "$($exe.Name) failed the signature check (status: $($sig.Status), signer: $($sig.SignerCertificate.Subject)). Not installed."
+                return
+            }
+            Write-Host "$($exe.Name): signature valid ($($sig.SignerCertificate.Subject))"
+        }
+        New-Item -ItemType Directory -Path $Dir -Force | Out-Null
+        Copy-Item -Path "$stage\*" -Destination $Dir -Recurse -Force
+    } catch {
+        Write-Warning "Direct BGInfo download failed: $($_.Exception.Message)"
+    } finally {
+        Remove-Item -Path $zip, $stage -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+if (-not $bgInfoExe) {
+    New-Item -ItemType Directory -Path $BgInfoDir -Force | Out-Null
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        $wingetOut = winget install --id Microsoft.Sysinternals.BGInfo --source winget --silent --accept-package-agreements --accept-source-agreements --location $BgInfoDir 2>&1 | Out-String
+        Write-Host $wingetOut
+        $bgInfoExe = Get-ChildItem -Path $BgInfoDir -Filter "Bginfo*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $bgInfoExe -and $AllowHashMismatch -and $wingetOut -match 'hash does not match') {
+            # --ignore-security-hash only works while winget's InstallerHashOverride setting is on (admin only).
+            # Turn it on for this one install and always turn it back off.
+            Write-Warning "winget says the installer hash does not match. -AllowHashMismatch was given, so retrying with winget's hash check overridden."
+            winget settings --enable InstallerHashOverride | Out-Null
+            try {
+                winget install --id Microsoft.Sysinternals.BGInfo --source winget --silent --accept-package-agreements --accept-source-agreements --ignore-security-hash --location $BgInfoDir
+            } finally {
+                winget settings --disable InstallerHashOverride | Out-Null
+            }
+            $bgInfoExe = Get-ChildItem -Path $BgInfoDir -Filter "Bginfo*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+    } else {
+        Write-Warning "winget not available."
+    }
+    if (-not $bgInfoExe) {
+        Write-Warning "winget did not install BGInfo - falling back to the signed download from download.sysinternals.com."
+        Install-BgInfoDirect -Dir $BgInfoDir
         $bgInfoExe = Get-ChildItem -Path $BgInfoDir -Filter "Bginfo*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     }
 }
 if (-not $bgInfoExe) {
-    Write-Error "BGInfo executable not found after winget install."
+    Write-Error "BGInfo executable not found after winget and the direct download. Install it manually from https://learn.microsoft.com/sysinternals/downloads/bginfo"
     return
 }
 
