@@ -23,7 +23,7 @@
     Ends with: RESULT|<host>|pass=N|warn=N|fail=N|failed=<names>|v=<version>
 #>
 
-$ScriptVersion = '2026-11-03.1'
+$ScriptVersion = '2026-11-04.1'
 function Say($m) { Write-Output $m }
 
 $MerionITRoot = 'C:\MerionIT'
@@ -123,6 +123,12 @@ $dcuCli = @(foreach ($r in $env:ProgramFiles, ${env:ProgramFiles(x86)}) {
 }) | Select-Object -First 1
 if ($isDell) {
     $dcuSvc = Get-Service -Name 'DellClientManagementService' -ErrorAction SilentlyContinue
+    # It is delayed-start: right after a boot it is still Stopped, which is not a fault (seen on
+    # MRQ7500-LT301 2026-11-04, 1 minute after boot). Give it up to 4 minutes before judging.
+    for ($i = 0; $i -lt 24 -and $dcuSvc -and $dcuSvc.Status -ne 'Running' -and $dcuSvc.StartType -eq 'Automatic'; $i++) {
+        Start-Sleep -Seconds 10
+        $dcuSvc.Refresh()
+    }
     if ($dcuCli -and $dcuSvc.Status -eq 'Running') {
         Add-Result 'dell-dcu' 'PASS' "dcu-cli present, DellClientManagementService running"
     } else {

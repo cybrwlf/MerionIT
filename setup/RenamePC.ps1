@@ -2,7 +2,9 @@
 <#
 Consolidated replacement for MRMrenamePC.ps1 / MRQrenamePC.ps1 / MRPrenamePC.ps1 / MITrenamePC.ps1.
 Behavior per company:
-  - MRM / MRQ / MRP: prompt for a 4-digit property/phone-extension code.
+  - MRM: prompt for the 4-digit property code (stays with the machine).
+  - MRQ / MRP: prompt for the user's 4-digit phone extension (changes when the machine changes hands;
+    7500 = wiped and waiting for a new user). Confirmed by Ricardo 2026-11-04.
   - MIT: property is always "Loan" (annual MIT-event loaner laptops), no property prompt.
   - MIP (Mainline): never has properties, so it prompts for the user's 4-digit phone extension only.
     Added 2026-11-02; MIP3004-LT301 (research/Year-Detection-Decision.md) already used this format.

@@ -60,6 +60,10 @@ param(
 
     [switch]$DeleteSecrets,
 
+    # Leave the Kaseya agent alone: no install, no repair. Used by manual\Reset-ForNewUser.ps1 on a machine
+    # whose agent was removed; setup for the new user (Setup.bat) installs it then (Ricardo, 2026-11-04).
+    [switch]$SkipAgent,
+
     # Skip every app download: BGInfo, the standard app set and Office. For slow internet. Whatever is
     # already on the machine is left alone and the rest of setup carries on. Run Install-Apps.ps1 and
     # Fix-OfficeLanguages.ps1 later without it. The Kaseya agent check is not affected.
@@ -176,7 +180,7 @@ if ($namedPrefixes -notcontains $prefix -or $ForceRename) {
 
 # A rename on a machine that already had the agent (see the rename block above) leaves this marker.
 # Handled here, before the .setup-complete prompt below, so answering N there can't skip the repair.
-if (Test-Path "$MerionITRoot\.agent-repair-pending") {
+if ((Test-Path "$MerionITRoot\.agent-repair-pending") -and -not $SkipAgent) {
     & "$MerionITRoot\setup\Agent-Install.ps1"
 }
 
@@ -253,7 +257,11 @@ if (Test-Path "$MerionITRoot\tweaks\bginfo.ps1") {
 }
 
 # Agent check - Agent-Install.ps1 detects an existing install and skips itself automatically.
-& "$MerionITRoot\setup\Agent-Install.ps1"
+if ($SkipAgent) {
+    Write-Host "-SkipAgent: Kaseya agent not installed or checked. Setup.bat for the new user installs it."
+} else {
+    & "$MerionITRoot\setup\Agent-Install.ps1"
+}
 
 # Apps always run - every machine should have the full standard set. Install-Apps.ps1 detects
 # anything already present (even if installed manually) and updates it instead of reinstalling.

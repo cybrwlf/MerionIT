@@ -26,7 +26,19 @@
           Move can leave files behind in them.
         - Every OneDrive* folder in the profile, whole. A known folder that lives inside one is
           not copied a second time.
-        - Downloads, only with -IncludeDownloads.
+        - Downloads, only with -IncludeDownloads, and filtered (people never clean it out): files
+          changed in the last -DownloadsMonths months (12), no installers or disk images (.exe, .msi,
+          .msix, .appx, .iso, .img, .vhd(x), .dmg ...), and repeat downloads of one file ("x.pdf",
+          "x (1).pdf", "x (2).pdf") cut to the newest per calendar month, plus that month's largest
+          copy when it is bigger than the newest (a failed download can be the newest). Everything skipped is
+          listed in downloads-skipped.txt in the backup folder.
+        - desktop.ini is never copied, from any folder.
+        - SharePoint sync folders (e.g. C:\Users\<user>\<tenant>\<site> - Documents): LOCAL files only.
+          SharePoint is reachable by everyone else on the web, so placeholders are skipped and never
+          count as cloud-only. What matters is a file edited offline that may never have synced. Added
+          2026-11-03 after PNoon on MRM8075-LT101: 216 GB of synced libraries, about 10 MB of it local,
+          including two spreadsheets edited locally that the old version never looked at. Hidden and
+          system files (desktop.ini, sync markers, Office ~$ lock files) are skipped.
 
       Lands in <Destination>\users\<profile folder>\<yyyy-MM-dd_HHmmss>\, one dated folder per run,
       so a second run never overwrites the first. Copied with robocopy (no ACLs, so whoever picks
@@ -91,10 +103,13 @@ param(
     # Let -Remove go ahead even though cloud-only OneDrive files could not be backed up.
     [switch]$AllowCloudOnly,
 
-    [switch]$IncludeDownloads
+    [switch]$IncludeDownloads,
+
+    # With -IncludeDownloads: only Downloads files changed in this many months are copied.
+    [int]$DownloadsMonths = 12
 )
 
-$ScriptVersion = '2026-10-16.1'
+$ScriptVersion = '2026-11-04.1'
 $Protected = 'operator*', 'administrator*', 'TempUser*', 'PCSadmin*', 'public*', 'scan*', 'default*', 'All Users'
 $Destination = $Destination.TrimEnd('\')
 $stamp = Get-Date -Format 'yyyy-MM-dd_HHmmss'
@@ -212,6 +227,15 @@ function Get-ShellFolderPaths {
             }
             $key.Close()
         }
+        # Every folder the OneDrive client syncs (personal OneDrive and SharePoint libraries alike).
+        $providers = [Microsoft.Win32.Registry]::Users.OpenSubKey("$root\Software\SyncEngines\Providers\OneDrive")
+        if ($providers) {
+            $result['_SyncRoots'] = @(foreach ($id in $providers.GetSubKeyNames()) {
+                $sub = $providers.OpenSubKey($id)
+                if ($sub) { $mp = $sub.GetValue('MountPoint'); $sub.Close(); if ($mp) { ([string]$mp).TrimEnd('\') } }
+            })
+            $providers.Close()
+        }
     } finally {
         if ($mounted) {
             # An open handle keeps the hive mounted, and a mounted hive blocks profile removal.
@@ -232,7 +256,8 @@ function Get-ShellFolderPaths {
 function Invoke-Robocopy {
     param([string]$Source, [string]$Target, [string]$Log, [switch]$ListOnly)
 
-    $roboArgs = @($Source, $Target, '/E', '/COPY:DAT', '/DCOPY:DAT', '/R:0', '/W:0', '/XJD', '/FFT', '/NP')
+    # /XF desktop.ini: folder view settings, never user data (Ricardo, 2026-11-04).
+    $roboArgs = @($Source, $Target, '/E', '/COPY:DAT', '/DCOPY:DAT', '/R:0', '/W:0', '/XJD', '/FFT', '/NP', '/XF', 'desktop.ini')
     if ($ListOnly) {
         $roboArgs += '/L', '/XX', '/NJH', '/NJS', '/NDL', '/NC', '/NS', '/FP', "/UNILOG:$Log"
         & robocopy.exe @roboArgs | Out-Null
@@ -250,6 +275,94 @@ function Test-CloudOnly([string]$Path) {
     $p = if ($Path.Length -ge 248 -and $Path -notlike '\\*') { "\\?\$Path" } else { $Path }
     try { $attr = [int][System.IO.File]::GetAttributes($p) } catch { return $false }
     [bool]($attr -band 0x441000)
+}
+
+# SharePoint sync folders: copy only files whose content is on this disk. Walked by hand with
+# DirectoryInfo, because the attributes come back with the listing (no per-file call across hundreds of
+# thousands of placeholders) and an unreadable folder is counted instead of ending the walk. Returns
+# counts; the caller adds Failed to the run's failures, so a local file that did not copy blocks -Remove.
+function Get-LocalFiles {
+    param([string]$Source)
+    $skipAttr = [IO.FileAttributes]::Hidden -bor [IO.FileAttributes]::System
+    $r = [pscustomobject]@{ Files = New-Object System.Collections.Generic.List[object]; Placeholders = 0; Failed = @() }
+    $stack = New-Object System.Collections.Generic.Stack[string]
+    $stack.Push($Source)
+    while ($stack.Count) {
+        $dir = $stack.Pop()
+        try {
+            $di = New-Object IO.DirectoryInfo("\\?\$dir")
+            $subdirs = $di.GetDirectories()
+            $files = $di.GetFiles()
+        } catch {
+            $r.Failed += "$dir\  (folder could not be read: $($_.Exception.Message))"
+            continue
+        }
+        foreach ($d in $subdirs) { $stack.Push("$dir\$($d.Name)") }
+        foreach ($f in $files) {
+            if ([int]$f.Attributes -band 0x441000) { $r.Placeholders++; continue }
+            # desktop.ini, sync markers, Office ~$ lock files.
+            if ($f.Attributes -band $skipAttr -or $f.Name -ieq 'desktop.ini') { continue }
+            $r.Files.Add([pscustomobject]@{ Dir = $dir; Name = $f.Name; Path = "$dir\$($f.Name)"; Length = $f.Length; LastWriteTime = $f.LastWriteTime })
+        }
+    }
+    $r
+}
+
+# Copies files found by Get-LocalFiles, keeping their path below $Source, and reads each one back.
+function Copy-FileList {
+    param($Files, [string]$Source, [string]$Target, [switch]$ListOnly)
+    $r = [pscustomobject]@{ Copied = 0; Bytes = 0L; Failed = @() }
+    foreach ($f in $Files) {
+        if ($ListOnly) { $r.Copied++; $r.Bytes += $f.Length; continue }
+        $dest = "$Target$($f.Path.Substring($Source.Length))"
+        try {
+            [void][IO.Directory]::CreateDirectory("\\?\$(Split-Path $dest -Parent)")
+            [IO.File]::Copy("\\?\$($f.Path)", "\\?\$dest", $true)
+            # Read it back. "No error" is not the test.
+            if ((New-Object IO.FileInfo("\\?\$dest")).Length -ne $f.Length) { throw 'size differs after copy' }
+            $r.Copied++
+            $r.Bytes += $f.Length
+        } catch {
+            $r.Failed += "$($f.Path)  ($($_.Exception.Message))"
+        }
+    }
+    $r
+}
+
+# Downloads rules (Ricardo, 2026-11-04). People never clean Downloads out, so it is filtered instead of
+# copied whole: nothing older than -DownloadsMonths, no installers or disk images, and repeat downloads
+# of one file ("report.pdf", "report (1).pdf", "report (2).pdf" in the same folder) cut to the newest
+# per calendar month, so the month the user left keeps only the very last one. "Newest" is the file's
+# modified time, which browsers set to the download time; the higher number breaks a tie.
+$SkipDownloadTypes = '.exe', '.msi', '.msp', '.msix', '.msixbundle', '.appx', '.appxbundle', '.iso', '.img', '.vhd', '.vhdx', '.dmg'
+function Select-DownloadFiles {
+    param($Files, [int]$Months)
+    $cutoff = (Get-Date).AddMonths(-$Months)
+    $keep = @(); $skipped = @()
+    $candidates = foreach ($f in $Files) {
+        $ext = [IO.Path]::GetExtension($f.Name).ToLower()
+        if ($SkipDownloadTypes -contains $ext) { $skipped += "installer/disk image  $($f.Path)"; continue }
+        if ($f.LastWriteTime -lt $cutoff) { $skipped += "older than $Months months  $($f.Path)"; continue }
+        # Repeats stack: "x (1) (1).xlsx" is a copy of "x (1).xlsx", which is a copy of "x.xlsx".
+        $m = [regex]::Match([IO.Path]::GetFileNameWithoutExtension($f.Name), '^(.*?)((?: ?\(\d+\))+)$')
+        $base = if ($m.Success) { $m.Groups[1].Value } else { [IO.Path]::GetFileNameWithoutExtension($f.Name) }
+        # Only breaks a tie on modified time: the last number in the name.
+        $copyNo = if ($m.Success) { [int]([regex]::Matches($m.Groups[2].Value, '\d+') | Select-Object -Last 1).Value } else { 0 }
+        $f | Add-Member -NotePropertyName CopyNo -NotePropertyValue $copyNo -PassThru |
+            Add-Member -NotePropertyName Key -NotePropertyValue ("$($f.Dir)\$base$ext|$($f.LastWriteTime.ToString('yyyy-MM'))".ToLower()) -PassThru
+    }
+    foreach ($g in @($candidates | Group-Object Key)) {
+        $sorted = @($g.Group | Sort-Object LastWriteTime, CopyNo -Descending)
+        $newest = $sorted[0]
+        $keep += $newest
+        # The newest can be a failed download: on MRQ7582-LT301 (2026-11-04) "x (2).zip" was 9 KB and the
+        # real 1.5 MB file was an older copy. So the month's largest copy is kept too when it is bigger.
+        $largest = $sorted | Sort-Object Length, LastWriteTime, CopyNo -Descending | Select-Object -First 1
+        if ($largest.Length -gt $newest.Length) { $keep += $largest }
+        $sorted | Where-Object { $_ -ne $newest -and -not ($largest.Length -gt $newest.Length -and $_ -eq $largest) } |
+            ForEach-Object { $skipped += "older copy, same month as $($newest.Name)  $($_.Path)" }
+    }
+    [pscustomobject]@{ Keep = $keep; Skipped = $skipped }
 }
 
 # ---- Guards that need no work done first --------------------------------------------------------
@@ -341,6 +454,7 @@ foreach ($t in $targets) {
 
     # Backup folder name -> source path. OneDrive first, so known folders inside it are not repeated.
     $sources = [ordered]@{}
+    $downloadSources = [ordered]@{}
     $oneDriveDirs = @(Get-ChildItem -LiteralPath $t.Path -Directory -Filter 'OneDrive*' -Force -ErrorAction SilentlyContinue |
         ForEach-Object { $_.FullName })
     foreach ($od in $oneDriveDirs) { $sources[(Split-Path $od -Leaf)] = $od }
@@ -348,7 +462,7 @@ foreach ($t in $targets) {
     foreach ($w in $wanted) {
         $default = Join-Path $t.Path $w
         foreach ($candidate in @($default, $shell[$w]) | Where-Object { $_ }) {
-            if ($sources.Values -contains $candidate) { continue }
+            if ($sources.Values -contains $candidate -or $downloadSources.Values -contains $candidate) { continue }
             if ($oneDriveDirs | Where-Object { "$candidate\" -like "$_\*" }) {
                 Say "   $w is inside OneDrive ($candidate) - covered by the OneDrive copy."
                 continue
@@ -360,11 +474,30 @@ foreach ($t in $targets) {
                 }
                 continue
             }
-            $sources[$(if ($candidate -ieq $default) { $w } else { "$w-redirected" })] = $candidate
+            $key = if ($candidate -ieq $default) { $w } else { "$w-redirected" }
+            # Downloads goes through its own rules (Select-DownloadFiles), not a whole-folder robocopy.
+            if ($w -eq 'Downloads') { $downloadSources[$key] = $candidate } else { $sources[$key] = $candidate }
         }
     }
 
-    if ($sources.Count -eq 0 -and -not $failed) {
+    # SharePoint sync folders, local files only. From the user's own sync registration, plus the
+    # "<tenant>" folder that sits next to "OneDrive - <tenant>" in case the hive could not be read.
+    $spRoots = @(
+        @($shell['_SyncRoots']) + @($oneDriveDirs | ForEach-Object {
+            $leaf = Split-Path $_ -Leaf
+            if ($leaf -like 'OneDrive - *') { Join-Path $t.Path $leaf.Substring('OneDrive - '.Length) }
+        }) | Where-Object { $_ -and "$_\" -like "$($t.Path)\*" } | Select-Object -Unique |
+            Where-Object {
+                $root = $_
+                -not ($sources.Values | Where-Object { "$root\" -like "$_\*" }) -and
+                (Test-Path -LiteralPath $root -PathType Container)
+            }
+    )
+    # The registry lists each library ("<tenant>\<site> - Documents"), the fallback adds "<tenant>"
+    # itself. Keep only the outermost, or every library is copied twice.
+    $spRoots = @($spRoots | Where-Object { $r = $_; -not ($spRoots | Where-Object { $_ -ne $r -and "$r\" -like "$_\*" }) })
+
+    if ($sources.Count -eq 0 -and $downloadSources.Count -eq 0 -and -not $spRoots -and -not $failed) {
         Say '   No Desktop, Documents, Pictures or OneDrive folder found - nothing to back up.'
         continue
     }
@@ -398,6 +531,34 @@ foreach ($t in $targets) {
         $cloud += $leftCloud
         $failed += $leftFailed
         Say "     robocopy exit $rc; verify: $($leftFailed.Count) not copied, $($leftCloud.Count) cloud-only"
+    }
+
+    foreach ($sp in $spRoots) {
+        $dst = Join-Path $runDir "SharePoint-$(Split-Path $sp -Leaf)"
+        Say "   $(if ($dryRun) { 'What if: scan' } else { 'Copying local files from' }) SharePoint sync folder $sp (placeholders skipped)"
+        $found = Get-LocalFiles -Source $sp
+        $res = Copy-FileList -Files $found.Files -Source $sp -Target $dst -ListOnly:$dryRun
+        $res.Failed = @($found.Failed) + @($res.Failed)
+        $failed += $res.Failed
+        Say "     $($res.Copied) local file(s) $(if ($dryRun) { 'would be copied' } else { 'copied and size-checked' }), $([math]::Round($res.Bytes / 1MB, 1)) MB; $($found.Placeholders) placeholder(s) skipped (in SharePoint); $($res.Failed.Count) not copied"
+    }
+
+    foreach ($name in $downloadSources.Keys) {
+        $src = $downloadSources[$name]
+        $dst = Join-Path $runDir $name
+        Say "   $(if ($dryRun) { 'What if: scan' } else { 'Copying' }) $src (last $DownloadsMonths months, no installers or disk images, newest repeat download per month)"
+        $found = Get-LocalFiles -Source $src
+        $pick = Select-DownloadFiles -Files $found.Files -Months $DownloadsMonths
+        $res = Copy-FileList -Files $pick.Keep -Source $src -Target $dst -ListOnly:$dryRun
+        $res.Failed = @($found.Failed) + @($res.Failed)
+        $failed += $res.Failed
+        Say "     $($res.Copied) file(s) $(if ($dryRun) { 'would be copied' } else { 'copied and size-checked' }), $([math]::Round($res.Bytes / 1MB, 1)) MB; $($pick.Skipped.Count) skipped by the rules; $($res.Failed.Count) not copied"
+        if ($dryRun) {
+            $pick.Skipped | ForEach-Object { Say "       skip: $_" }
+        } elseif ($pick.Skipped) {
+            Set-Content -LiteralPath (Join-Path $runDir 'downloads-skipped.txt') -Value $pick.Skipped -Encoding UTF8
+            Say "     Skipped files listed in downloads-skipped.txt"
+        }
     }
 
     if ($dryRun) {
