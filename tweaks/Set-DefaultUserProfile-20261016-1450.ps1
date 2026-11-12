@@ -71,7 +71,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ScriptVersion = '2026-10-16.5'
+$ScriptVersion = '2026-11-12.1'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $problems = 0
 
@@ -134,6 +134,12 @@ foreach ($n in 'ContentDeliveryAllowed', 'OemPreInstalledAppsEnabled', 'PreInsta
     Add-Setting $cdm $n DWord 0
 }
 Add-Setting "$cv\UserProfileEngagement" 'ScoobeSystemSettingEnabled' DWord 0
+# Spotlight and tips on the lock screen, and sync-provider (OneDrive) ads in Explorer. These replaced
+# O&O ShutUp10's K001, K002 and M010 on 2026-11-12. Per-user on purpose: Microsoft's Spotlight policies
+# are ignored on Windows Pro (Policy CSP Experience: Enterprise and Education only).
+Add-Setting $cdm 'RotatingLockScreenEnabled' DWord 0
+Add-Setting $cdm 'RotatingLockScreenOverlayEnabled' DWord 0
+Add-Setting $adv 'ShowSyncProviderNotifications' DWord 0
 
 # Notifications, feedback, telemetry-ish, Meet Now
 Add-Setting "$cv\PushNotifications" 'ToastEnabled' DWord 0

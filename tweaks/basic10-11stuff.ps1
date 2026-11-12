@@ -95,7 +95,7 @@ If (!(Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Flyout
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FlyoutMenuSettings" -Name "ShowHibernateOption" -Type Dword -Value 0 -ErrorAction SilentlyContinue
 
 Write-Host "======================================="
-Write-Host "Disabling Maps updates (location itself is ALLOWED - see the Location block after O&O Shutup)..."
+Write-Host "Disabling Maps updates (location itself is ALLOWED - see the Location block further down)..."
 Set-ItemProperty -Path "HKLM:\SYSTEM\Maps" -Name "AutoUpdateEnabled" -Type DWord -Value 0 -ErrorAction SilentlyContinue
 Write-Host "======================================="
 Write-Host "Disabling TPM Check for upgrades (if applicable)..."
@@ -153,39 +153,63 @@ Write-Host "Setting Classic Right-Click Menu (Windows 11 specific tweak)..."
 # On Windows 10, it will likely have no effect.
 New-Item -Path "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" -Name "InprocServer32" -force -value "" -ErrorAction SilentlyContinue
 Write-Host "======================================="
-# Check if O&O Shutup 10 executable is present. The config is NOT downloaded - this repo ships
-# its own committed copy (tweaks\ooshutup10.cfg) so the actual settings applied are reviewable
-# and controlled here, not whatever happens to be live on Chris Titus's GitHub at run time.
-# Previously this downloaded a fresh config to ".\ooshutup10.cfg" every run, which silently never
-# got used anyway - relative paths here resolve against C:\MerionIT (the batch file's working
-# directory), not tweaks\, so the committed config was never actually read until this fix.
-Write-Host "Checking for O&O Shutup..."
-$OOSUConfig = "$PSScriptRoot\ooshutup10.cfg"
-If (!(Test-Path ".\OOSU10.exe")) {
-    Write-Host "Downloading O&O Shutup executable"
+# --- Privacy settings that O&O ShutUp10 used to apply (replaced 2026-11-12, Ricardo) ---------------
+# O&O ShutUp10 (OOSU10.exe with tweaks\ooshutup10.cfg) used to run here. Dropped because: it downloaded
+# and ran the exe at build time with no signature check; when the download failed the whole pass was
+# skipped silently (MRM8035-LT101); our 2020 cfg used IDs the current version has renumbered or dropped
+# (P007, E011, E012, E116, E117); and most of the rest either duplicated this script or was undone by it
+# (Location, the taskbar search box).
+#
+# What was still worth keeping is set below with Microsoft's own Group Policy values. Each key and value
+# was checked against the ADMX templates in C:\Windows\PolicyDefinitions and the Policy CSP docs on
+# learn.microsoft.com (2026-11-12). The O&O ID each one replaces is in the comment. All are machine-wide
+# (HKLM), so they reach every user, not just the setup account. Per-user ones (Spotlight on the lock
+# screen, sync-provider ads in Explorer) are in tweaks\Set-DefaultUserProfile-*.ps1 and further down.
+# Left out on purpose: Bluetooth advertising (P026, no Group Policy exists for it, MDM only).
+Write-Host "======================================="
+Write-Host "Applying privacy policies (replaces O&O ShutUp10)..."
+# Leading commas keep each entry a 3-item array (without them PowerShell flattens the list).
+$privacyPolicies = @(
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Windows\TabletPC', 'PreventHandwritingDataSharing', 1)                  # P001 handwriting data sharing
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Windows\HandwritingErrorReports', 'PreventHandwritingErrorReports', 1)   # P002 handwriting error reports
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppCompat', 'DisableInventory', 1)                               # P003 Inventory Collector
+    ,@('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\TextInput', 'AllowLinguisticDataCollection', 0)   # P008 inking and typing data
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\SQMClient\Windows', 'CEIPEnable', 0)                                    # P027 Customer Experience Improvement Program
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppCompat', 'AITEnable', 0)                                      # U001 application telemetry
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Windows\System', 'AllowCrossDeviceClipboard', 0)                         # A005 clipboard sync to other devices
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Windows\CredUI', 'DisablePasswordReveal', 1)                             # S001 password reveal button
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppCompat', 'DisableUAR', 1)                                     # S002 Steps Recorder
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization', 'AllowInputPersonalization', 0)                   # C002 + C013 online speech recognition / input personalization
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search', 'AllowCloudSearch', 0)                          # C011 cloud search (OneDrive/SharePoint in Windows search)
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Speech', 'AllowSpeechModelUpdate', 0)                                    # C010 + W011 speech model downloads
+    # Microsoft Edge, machine-wide policies (names checked against learn.microsoft.com/deployedge/microsoft-edge-policies).
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Edge', 'ConfigureDoNotTrack', 1)                                         # E101 tracking (sends Do Not Track)
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Edge', 'PaymentMethodQueryEnabled', 0)                                   # E115 sites checking for saved payment methods
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Edge', 'PersonalizationReportingEnabled', 0)                             # E118 personalized ads, search and news
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Edge', 'UserFeedbackAllowed', 0)                                         # E111 feedback button
+    ,@('HKLM:\SOFTWARE\Policies\Microsoft\Edge', 'AutofillCreditCardEnabled', 0)                                   # E112 saving and autofilling credit cards
+)
+# Read back every value, so a failure shows in the Step 2 log instead of passing silently like O&O did.
+$privacyFailed = 0
+foreach ($p in $privacyPolicies) {
+    $key, $name, $value = $p
     try {
-        Invoke-WebRequest -Uri "https://dl5.oo-software.com/files/ooshutup10/OOSU10.exe" -OutFile "OOSU10.exe" -ErrorAction Stop
-    } catch {
-        Write-Error "Failed to download OOSU10.exe: $($_.Exception.Message)"
-    }
-} else {
-    Write-Host "O&O Shutup executable found, skipping download."
+        if (!(Test-Path $key)) { New-Item -Path $key -Force -ErrorAction Stop | Out-Null }
+        Set-ItemProperty -Path $key -Name $name -Type DWord -Value $value -ErrorAction Stop
+    } catch {}
+    $now = (Get-ItemProperty -Path $key -Name $name -ErrorAction SilentlyContinue).$name
+    if ($now -ne $value) { Write-Warning "Privacy policy NOT applied: $key\$name (wanted $value, found '$now')"; $privacyFailed++ }
 }
-# Run O&O Shutup if executable exists, using this repo's own committed config
-If (Test-Path ".\OOSU10.exe") {
-    if (Test-Path $OOSUConfig) {
-        Write-Host "Running O&O Shutup with the committed config ($OOSUConfig)"
-        ./OOSU10.exe $OOSUConfig /quiet
-    } else {
-        Write-Error "Committed ooshutup10.cfg not found at $OOSUConfig - skipping O&O Shutup rather than falling back to an unreviewed config."
-    }
-} else {
-    Write-Host "OOSU10.exe not found, skipping O&O Shutup execution."
-}
+Write-Host "  $($privacyPolicies.Count - $privacyFailed) of $($privacyPolicies.Count) privacy policies applied and read back."
+# Per-user part for the account running setup (new accounts get it from the Default profile).
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "RotatingLockScreenEnabled" -Type DWord -Value 0 -ErrorAction SilentlyContinue        # K001 Spotlight on the lock screen
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "RotatingLockScreenOverlayEnabled" -Type DWord -Value 0 -ErrorAction SilentlyContinue # K002 fun facts and tips on the lock screen
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowSyncProviderNotifications" -Type DWord -Value 0 -ErrorAction SilentlyContinue           # M010 OneDrive/sync-provider ads in Explorer
 
-# Location is ALLOWED on Merion machines (changed 2026-10-09; it used to be denied). This has to run
-# AFTER O&O Shutup, which can write the DisableLocation policy and would otherwise win. Observed on
-# MRM8075-LT101 after a full run: consent=Deny, DisableLocation=1, sensor override=0.
+# Location is ALLOWED on Merion machines (changed 2026-10-09; it used to be denied). O&O ShutUp10 used
+# to write the DisableLocation policy here (observed on MRM8075-LT101 after a full run: consent=Deny,
+# DisableLocation=1, sensor override=0). O&O is gone, but this stays so a re-run repairs machines built
+# while it was still in use.
 Write-Host "======================================="
 Write-Host "Allowing Location services..."
 $consentPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location"

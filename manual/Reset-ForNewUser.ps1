@@ -23,10 +23,26 @@
                   cache, vendor drivers, power plan, Windows Update policy, Set-MerionStandards and the
                   Default profile (whoever signs in first gets the per-user settings and taskbar pins from
                   it, as with Add-User.bat). Per-user Start menu / taskbar tweaks are not run.
-    4. REBOOT, then a startup task (SYSTEM) runs Agent-Install.ps1 so the Kaseya agent is reinstalled under
-       the new name (/r /w), runs tools\Test-MerionBuild.ps1, adds both results to the log and removes itself.
-       A machine with NO agent is left without one (Ricardo, 2026-11-04): Setup.bat for the new user installs
-       it. Step 1 gets -SkipAgent and nothing here installs it, so the build check's kaseya FAIL is expected.
+    4. REBOOT, then a startup task (SYSTEM) UNINSTALLS the Kaseya agent, runs tools\Test-MerionBuild.ps1,
+       adds both results to the log and removes itself. A reset laptop goes on the shelf, and a shelved
+       machine must not keep an agent (Ricardo, 2026-11-12). Setup.bat for the new user downloads and
+       installs it again. Step 1 always gets -SkipAgent, so the build check's kaseya FAIL is expected.
+       The uninstall waits for the reboot so a Kaseya-launched remote run is not cut off halfway.
+       How: the agent's own uninstall string from Add/Remove Programs with /s added (silent), per Kaseya's
+       KB "Uninstall an Agent Via Command Line" (helpdesk.kaseya.com/hc/en-gb/articles/229039368). The
+       installer's switch list (help.vsa9.kaseya.com/help/Content/VSA/493.htm) has no uninstall switch.
+       Not yet tested on a real machine (2026-11-12): -WhatIf prints the string it would run.
+
+    CLEANUP LIST
+      Before anything is changed (right after the Y), one row per user goes into
+      <USB>\MerionIT-Offboard\cleanup-list.csv and into the run's own folder: run, date, old and new name,
+      serial number, Kaseya agent ID, local user, the Microsoft 365 account that user had OneDrive signed in
+      with, and the backup result (updated as each user finishes). KaseyaCleaned and MicrosoftCleaned are
+      left blank for Ricardo. It does not record why the user left. Remote: <archive>.cleanup.csv beside
+      the archive, merged into the USB list by -Collect.
+      The M365 account is read from the user's own registry hive (OneDrive\Accounts\Business*\UserEmail),
+      loaded with reg.exe for a moment and unloaded again. If it will not unload the run stops there,
+      before any change, because a hive left loaded would block the profile removal.
 
     WHERE THE BACKUP GOES
       USB    : <USB>\MerionIT-Offboard\<old name>_<timestamp>\, log beside it, one line in
@@ -57,7 +73,8 @@
     No confirmation prompt. Implied by -Remote.
 
 .EXAMPLE
-    E:\MerionIT\manual\Reset-ForNewUser.ps1 -WhatIf          # from USB: show users, new name, what is copied
+    E:\MerionIT\manual\Reset-ForNewUser.bat -WhatIf          # same as below, but elevates itself and pauses at the end
+    E:\MerionIT\manual\Reset-ForNewUser.ps1 -WhatIf         # from USB: show users, new name, what is copied
     E:\MerionIT\manual\Reset-ForNewUser.ps1                  # from USB: do it (asks once)
     powershell.exe -ExecutionPolicy Bypass -File C:\MerionIT\manual\Reset-ForNewUser.ps1 -Remote   # Kaseya
     E:\MerionIT\manual\Reset-ForNewUser.ps1 -Collect         # at HQ, after a remote run
@@ -79,7 +96,7 @@ param(
     [switch]$AfterReboot
 )
 
-$ScriptVersion = '2026-11-04.1'
+$ScriptVersion = '2026-11-12.1'
 $dryRun = [bool]$WhatIfPreference
 $WhatIfPreference = $false
 
@@ -126,31 +143,125 @@ function Add-IndexLine([string]$Root, $Row) {
     $Row | Export-Csv -LiteralPath $index -Append -NoTypeInformation -Encoding UTF8
 }
 
+# Cleanup list: replace this run's rows in $Path, keep everyone else's (including Ricardo's ticks).
+function Merge-CleanupList([string]$Path, $Rows, [string]$RunId) {
+    $keep = @()
+    if (Test-Path -LiteralPath $Path) { $keep = @(Import-Csv -LiteralPath $Path | Where-Object { $_.Run -ne $RunId }) }
+    @($keep) + @($Rows) | Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
+}
+
+# Kaseya agent entries in Add/Remove Programs (what Kaseya's KB uninstalls from), plus its services.
+function Get-KaseyaAgent {
+    $entries = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+        ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } | Where-Object { $_.DisplayName -like '*Kaseya Agent*' -and $_.UninstallString })
+    $services = @(Get-Service | Where-Object { $_.DisplayName -like '*Kaseya Agent*' })
+    # Kaseya's KB example: ...\Kaseya\<AgentID>\KASetup.exe /s /r /g <AgentID> ...
+    $ids = @($entries | ForEach-Object { if ($_.UninstallString -match '/g\s+"?([^"\s]+)') { $Matches[1] } } | Sort-Object -Unique)
+    [pscustomobject]@{
+        Installed = [bool]($entries -or $services)
+        Entries   = $entries
+        Id        = if ($ids) { $ids -join '; ' } elseif ($services) { "service $(($services.Name) -join '; ')" } else { '' }
+    }
+}
+
+# Microsoft 365 account(s) the user had OneDrive signed in with, read from their own NTUSER.DAT.
+# reg.exe, not the PowerShell registry provider, which can keep the hive open and block the profile
+# removal. Personal OneDrive accounts are skipped on purpose. Throws only if the hive will not unload.
+$script:hiveCount = 0
+function Get-M365Account([string]$ProfilePath) {
+    $hive = Join-Path $ProfilePath 'NTUSER.DAT'
+    if (-not (Test-Path -LiteralPath $hive)) { return '(no registry hive)' }
+    $script:hiveCount++
+    $mount = "HKLM\MerionIT-Reset-$script:hiveCount"
+    & reg.exe load $mount $hive 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { return '(could not read)' }
+    $emails = @()
+    try {
+        $key = ''
+        foreach ($line in @(& reg.exe query "$mount\Software\Microsoft\OneDrive\Accounts" /s /v UserEmail 2>$null)) {
+            if ($line -match '^HKEY_') { $key = $line }
+            elseif ($key -match '\\Accounts\\Business\d*$' -and $line -match '^\s+UserEmail\s+REG_SZ\s+(\S.*)$') { $emails += $Matches[1].Trim() }
+        }
+    } finally {
+        [GC]::Collect()
+        & reg.exe unload $mount 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "could not unload $hive from $mount (reg unload exit $LASTEXITCODE). Reboot before running this again." }
+    }
+    if ($emails) { ($emails | Sort-Object -Unique) -join '; ' } else { '(none found)' }
+}
+
+# The agent's own uninstall string with /s added (silent), per Kaseya's KB. Only runs a KASetup signed
+# by Kaseya, or an msiexec /x line (then /qn /norestart). Returns $true when the agent is gone after.
+function Invoke-KaseyaUninstall([string]$LogDir) {
+    $agent = Get-KaseyaAgent
+    if (-not $agent.Installed) { Say '  No Kaseya agent found. Nothing to uninstall.'; return $true }
+    if (-not $agent.Entries) { Say '  Kaseya services found but no uninstall entry in Add/Remove Programs. Uninstall it by hand.'; return $false }
+    foreach ($e in $agent.Entries) {
+        # Expanded here: Start-Process passes %TEMP% (in Kaseya's own /l "%TEMP%\kasetup.log") through literally.
+        $cmd = [Environment]::ExpandEnvironmentVariables($e.UninstallString).Trim()
+        if ($cmd -match '^"([^"]+)"\s*(.*)$' -or $cmd -match '^(\S+)\s*(.*)$') { $exe = $Matches[1]; $argLine = $Matches[2] } else { continue }
+        if ((Split-Path $exe -Leaf) -ieq 'msiexec.exe') {
+            if ($argLine -notmatch '(?i)/qn') { $argLine += ' /qn' }
+            if ($argLine -notmatch '(?i)/norestart') { $argLine += ' /norestart' }
+        } else {
+            $sig = Get-AuthenticodeSignature -FilePath $exe -ErrorAction SilentlyContinue
+            if (-not $sig -or $sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Kaseya Holdings Inc') {
+                Say "  NOT RUN: $exe is missing or not signed by Kaseya (status: $($sig.Status)). Uninstall it by hand."
+                return $false
+            }
+            if ($argLine -notmatch '(?i)(^|\s)/s(\s|$)') { $argLine = "/s $argLine".Trim() }
+            if ($argLine -notmatch '(?i)(^|\s)/l(\s|$)') { $argLine += " /l `"$LogDir\kasetup-uninstall-$(Get-Date -Format 'yyyyMMdd-HHmmss').log`"" }
+        }
+        Say "  Running: `"$exe`" $argLine"
+        # Polled, not -Wait (see Agent-Install.ps1: -Wait has hung after a sleep/wake).
+        $proc = Start-Process -FilePath $exe -ArgumentList $argLine -PassThru
+        $null = $proc.Handle   # keeps the handle so ExitCode is readable afterwards
+        $deadline = (Get-Date).AddMinutes(15)
+        while ((Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 5 }
+        if (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) { Say '  Uninstaller still running after 15 minutes, not waiting any longer.' }
+        else { Say "  Uninstaller exit code: $($proc.ExitCode) (Kaseya does not document these; the check below decides)." }
+    }
+    for ($i = 0; $i -lt 24; $i++) {
+        $left = Get-KaseyaAgent
+        if (-not $left.Installed -and -not (Get-CimInstance Win32_Process -Filter "Name = 'AgentMon.exe'" -ErrorAction SilentlyContinue)) { return $true }
+        Start-Sleep -Seconds 5
+    }
+    Say "  Still there after 2 minutes: $(@($left.Entries.DisplayName) + @(Get-Service | Where-Object { $_.DisplayName -like '*Kaseya Agent*' } | ForEach-Object DisplayName) -join ', ')"
+    return $false
+}
+
 # ================================================================== -AfterReboot (startup task, SYSTEM)
 if ($AfterReboot) {
     $state = Get-Content -LiteralPath $statePath -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
     if ($state) { $script:logFiles = @($state.LogFiles | Where-Object { Test-Path -LiteralPath (Split-Path $_ -Parent) }) }
     Say ''
     Say "== After reboot, $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), running as $env:COMPUTERNAME"
-    # The agent download and its health check need the network, which can lag a cold boot.
-    for ($i = 0; $i -lt 30; $i++) {
-        if (Test-NetConnection 'managedsupport.kaseya.net' -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue) { break }
-        Start-Sleep -Seconds 10
-    }
-    if (Test-Path "$MerionITRoot\.agent-repair-pending") {
-        Say 'Kaseya agent repair (/r /w) for the new name:'
-        & "$MerionITRoot\setup\Agent-Install.ps1" *>&1 | ForEach-Object { Say "  $_" }
+    $uninstallMarker = "$MerionITRoot\.agent-uninstall-pending"
+    $agentGone = $true
+    if (Test-Path -LiteralPath $uninstallMarker) {
+        # Give the agent a chance to reach its server first, so the portal can see it go. Not required.
+        for ($i = 0; $i -lt 18; $i++) {
+            if (Test-NetConnection 'managedsupport.kaseya.net' -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue) { break }
+            Start-Sleep -Seconds 10
+        }
+        Say 'Kaseya agent uninstall (this machine goes on the shelf):'
+        New-Item -ItemType Directory -Path "$MerionITRoot\logs" -Force | Out-Null
+        $agentGone = Invoke-KaseyaUninstall "$MerionITRoot\logs"
+        if ($agentGone) {
+            Remove-Item -LiteralPath $uninstallMarker -Force
+            Say '  Kaseya agent removed. Delete its record in the Kaseya portal (agent ID in cleanup-list.csv).'
+        } else {
+            Say '  WARNING: the Kaseya agent is still installed. Uninstall it by hand before shelving this machine.'
+        }
     }
     Say 'Build check:'
     & "$MerionITRoot\tools\Test-MerionBuild.ps1" | ForEach-Object { Say "  $_" }
-    if (-not (Get-Service | Where-Object { $_.DisplayName -like '*Kaseya Agent*' })) {
-        Say '  (kaseya FAIL is expected here: the agent was not on this machine and is not reinstalled until Setup.bat for the new user.)'
-    }
+    if ($agentGone) { Say '  (kaseya FAIL is expected: no agent on a shelved machine. Setup.bat for the new user installs it.)' }
     if (Test-Path -LiteralPath $secretsPath) { Remove-Item -LiteralPath $secretsPath -Force; Say 'Deleted a leftover secrets.psd1.' }
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
-    Say $(if (Get-Service | Where-Object { $_.DisplayName -like '*Kaseya Agent*' }) { 'Reset finished. Check the machine in the Kaseya portal and move it to its proper group.' } else { 'Reset finished. No Kaseya agent on purpose: Setup.bat for the new user installs it.' })
-    exit 0
+    Say $(if ($agentGone) { 'Reset finished. Ready for the shelf. Setup.bat for the new user installs the Kaseya agent.' } else { 'Reset finished EXCEPT the Kaseya agent (see above).' })
+    exit $(if ($agentGone) { 0 } else { 2 })
 }
 
 # ================================================================== -Collect (at HQ)
@@ -183,6 +294,13 @@ if ($Collect) {
         if (Test-Path -LiteralPath $log) { Copy-Item -LiteralPath $log -Destination (Join-Path $target 'Reset-ForNewUser.log') -Force }
         $row = Get-Content -LiteralPath ([IO.Path]::ChangeExtension($a.FullName, '.json')) -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
         if ($row) { $row.BackupFolder = $target; Add-IndexLine $dest $row }
+        $cleanup = [IO.Path]::ChangeExtension($a.FullName, '.cleanup.csv')
+        if (Test-Path -LiteralPath $cleanup) {
+            $rows = @(Import-Csv -LiteralPath $cleanup)
+            Copy-Item -LiteralPath $cleanup -Destination (Join-Path $target 'cleanup-list.csv') -Force
+            try { Merge-CleanupList (Join-Path $dest 'cleanup-list.csv') $rows $name; Remove-Item -LiteralPath $cleanup -Force }
+            catch { Write-Output "   WARNING: could not add to $dest\cleanup-list.csv (open in Excel?): $($_.Exception.Message). Rows are in $target\cleanup-list.csv." }
+        }
         Remove-Item -LiteralPath $a.FullName, $log, ([IO.Path]::ChangeExtension($a.FullName, '.json')) -Force -ErrorAction SilentlyContinue
         Write-Output "   OK: $extracted file(s) extracted and counted. Archive deleted from the laptop."
     }
@@ -245,9 +363,14 @@ Say "Mode          : $(if ($remoteMode) { 'remote (archive on the laptop, machin
 Say "Original name : $oldName"
 Say "New name      : $newName$(if ($newName -eq $oldName) { '  (kept)' })"
 Say "Users         : $(if ($users) { $users -join ', ' } else { '(none besides the protected accounts)' })"
-# No agent means it was removed on purpose: it is not reinstalled here. Setup.bat for the new user installs it.
-$hasAgent = [bool](Get-Service | Where-Object { $_.DisplayName -like '*Kaseya Agent*' })
-Say "Kaseya agent  : $(if ($hasAgent) { 'installed - reinstalled (/r /w) after the reboot so it picks up the new name' } else { 'not installed - left that way, Setup.bat for the new user installs it' })"
+# A reset machine goes on the shelf: the agent is uninstalled after the reboot. Setup.bat for the new user installs it.
+$agent = Get-KaseyaAgent
+$hasAgent = $agent.Installed
+Say "Kaseya agent  : $(if ($hasAgent) { "installed (ID $($agent.Id)) - UNINSTALLED after the reboot, machine goes on the shelf" } else { 'not installed - left that way, Setup.bat for the new user installs it' })"
+if ($hasAgent) {
+    foreach ($e in $agent.Entries) { Say "                uninstall string: $($e.UninstallString)" }
+    if (-not $agent.Entries) { Say '                WARNING: no uninstall entry in Add/Remove Programs, so the uninstall will have to be done by hand' }
+}
 Say "Backup        : $(if ($remoteMode) { "$archive  (AES-256, collect at HQ with -Collect)" } else { $runRoot })"
 
 # --- Checks that need no changes made.
@@ -269,9 +392,65 @@ if ($problems -and $dryRun) {
     exit 2
 }
 
+# --- Cleanup list: who was on this machine, for the Kaseya and Microsoft 365 cleanup afterwards.
+$runId = "${oldName}_$stamp"
+$serial = (Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue).SerialNumber
+$cleanupRows = [Collections.Generic.List[object]]::new()
+try {
+    foreach ($u in $users) {
+        $p = $profiles | Where-Object { (Split-Path $_.LocalPath -Leaf) -ieq $u } | Select-Object -First 1
+        $profilePath = if ($p) { $p.LocalPath } else { "$env:SystemDrive\Users\$u" }
+        $m365 = if ($loaded | Where-Object { (Split-Path $_.LocalPath -Leaf) -ieq $u }) { '(signed in, not read)' } else { Get-M365Account $profilePath }
+        $cleanupRows.Add([pscustomobject][ordered]@{
+                Run              = $runId
+                Date             = Get-Date -Format 'yyyy-MM-dd HH:mm'
+                OldName          = $oldName
+                NewName          = $newName
+                Serial           = $serial
+                KaseyaAgent      = if ($hasAgent) { $agent.Id } else { '(none installed)' }
+                LocalUser        = $u
+                M365Account      = $m365
+                Backup           = if ($dryRun) { 'what if' } else { 'pending' }
+                KaseyaCleaned    = ''
+                MicrosoftCleaned = ''
+            })
+    }
+} catch {
+    Say "STOPPED: $($_.Exception.Message)"
+    Say 'Nothing else was changed.'
+    exit 2
+}
+Say "Serial        : $serial"
+Say 'Cleanup list (written before anything changes; backup result filled in as each user finishes):'
+if ($cleanupRows.Count) { ($cleanupRows | Format-Table LocalUser, M365Account, KaseyaAgent -AutoSize | Out-String -Width 200).TrimEnd() -split "`r?`n" | ForEach-Object { Say "  $_" } }
+else { Say '  (no users, so no rows)' }
+
+if ($remoteMode) { $cleanupTargets = @("$runRoot.cleanup.csv") }
+else { $cleanupTargets = @((Join-Path $runRoot 'cleanup-list.csv'), (Join-Path $usbOffboard 'cleanup-list.csv')) }
+function Save-CleanupList {
+    if ($dryRun) { return }
+    foreach ($t in $cleanupTargets) {
+        try { Merge-CleanupList $t $cleanupRows $runId }
+        catch { Say "WARNING: could not write $t (open in Excel?): $($_.Exception.Message)" }
+    }
+}
+function Set-BackupResult([string]$User, [string]$Result) {
+    foreach ($r in $cleanupRows) { if ($r.LocalUser -ieq $User) { $r.Backup = $Result } }
+    Save-CleanupList
+}
+
 if (-not $dryRun -and -not $Force -and -not $remoteMode) {
     $answer = Read-Host "Back up and REMOVE the users above, rename to $newName and re-run setup? [Y/N]"
     if ($answer -notmatch '^[Yy]') { Say 'Stopped at the prompt. Nothing was changed.'; exit 2 }
+}
+
+# Written before the first change. The run's own copy must land, or nothing goes ahead.
+if (-not $dryRun -and $cleanupRows.Count) {
+    New-Item -ItemType Directory -Path (Split-Path $cleanupTargets[0] -Parent) -Force | Out-Null
+    try { Merge-CleanupList $cleanupTargets[0] $cleanupRows $runId }
+    catch { Say "STOPPED: could not write the cleanup list $($cleanupTargets[0]): $($_.Exception.Message)"; Say 'Nothing was changed.'; exit 2 }
+    Save-CleanupList
+    Say "Cleanup list written: $($cleanupTargets -join ' and ')"
 }
 
 $exitCode = 0
@@ -298,7 +477,10 @@ try {
     $backupResults = [ordered]@{}
     foreach ($u in $users) {
         # A name can disappear once an earlier one is removed (a profile folder of an account already done).
-        if (-not $dryRun -and -not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath "$env:SystemDrive\Users\$u")) { continue }
+        if (-not $dryRun -and -not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath "$env:SystemDrive\Users\$u")) {
+            Set-BackupResult $u 'already gone (removed with an earlier name)'
+            continue
+        }
         Say ''
         Say "== Back up and remove $u"
         $bArgs = @{ UserName = $u; Destination = $runRoot; Remove = $true; AllowCloudOnly = $true; IncludeDownloads = $true }
@@ -306,11 +488,18 @@ try {
         & $backupScript.FullName @bArgs *>&1 | ForEach-Object { Say "   $_" }
         $backupResults[$u] = $LASTEXITCODE
         # backup-userfiles exit codes: 0 = done, 1 = done with cloud-only files left in OneDrive, 2 = problem.
-        if ($LASTEXITCODE -ge 2) { throw "backup or removal of $u did not complete (exit $LASTEXITCODE) - stopped before renaming or setup" }
+        if (-not $dryRun) {
+            Set-BackupResult $u $(switch ($backupResults[$u]) {
+                    0 { 'backed up + removed' }
+                    1 { 'backed up + removed; cloud-only files left in OneDrive (see cloud-only-files.txt)' }
+                    default { "FAILED (exit $_) - see log" }
+                })
+        }
+        if ($backupResults[$u] -ge 2) { throw "backup or removal of $u did not complete (exit $($backupResults[$u])) - stopped before renaming or setup" }
     }
     if ($dryRun) {
         Say ''
-        Say "What if: rename $oldName -> $newName, run $(if ($remoteMode) { 'the machine-wide setup' } else { 'Step1-Accounts-Apps.ps1 -Unattended (with Step 2)' }), reboot, then repair the Kaseya agent and run the build check."
+        Say "What if: rename $oldName -> $newName, run $(if ($remoteMode) { 'the machine-wide setup' } else { 'Step1-Accounts-Apps.ps1 -Unattended (with Step 2)' }), reboot, then $(if ($hasAgent) { 'uninstall the Kaseya agent and ' })run the build check."
         exit 0
     }
 
@@ -335,10 +524,10 @@ try {
     }
 
     # --- 4. Rename (takes effect at the reboot) and arrange the after-reboot step.
+    # The agent comes off after the reboot (it goes on the shelf), so no rename repair is wanted.
+    Remove-Item -LiteralPath "$MerionITRoot\.agent-repair-pending" -Force -ErrorAction SilentlyContinue
+    if ($hasAgent) { Set-Content -Path "$MerionITRoot\.agent-uninstall-pending" -Value $oldName }
     if ($newName -ne $oldName) {
-        if ($hasAgent) {
-            Set-Content -Path "$MerionITRoot\.agent-repair-pending" -Value $oldName
-        }
         Rename-Computer -NewName $newName -Force -ErrorAction Stop -WarningAction SilentlyContinue
         Say ''
         Say "Renamed $oldName -> $newName (takes effect at the reboot)."
@@ -376,8 +565,8 @@ try {
         Get-Date -Format 'yyyy-MM-dd HH:mm:ss' | Set-Content -Path "$MerionITRoot\.setup-complete"
     } else {
         Say '== Full setup (Step1-Accounts-Apps.ps1 -Unattended, Step 2 follows; close Notepad at the end)'
-        $step1Args = @{ Unattended = $true }
-        if (-not $hasAgent) { $step1Args['SkipAgent'] = $true }
+        # Always -SkipAgent: the agent is uninstalled after the reboot, Setup.bat for the new user installs it.
+        $step1Args = @{ Unattended = $true; SkipAgent = $true }
         & "$MerionITRoot\setup\Step1-Accounts-Apps.ps1" @step1Args *>&1 | ForEach-Object { Say "   $_" }
     }
 } catch {
@@ -394,6 +583,12 @@ try {
             Set-Content -LiteralPath $reminder -Value $kept
         }
     }
+}
+
+# Anyone the run never reached (it stopped first) is marked so in the cleanup list.
+if (-not $dryRun -and @($cleanupRows | Where-Object Backup -eq 'pending')) {
+    foreach ($r in $cleanupRows) { if ($r.Backup -eq 'pending') { $r.Backup = 'not done - run stopped (see log)' } }
+    Save-CleanupList
 }
 
 # --- 6. Record it. USB: index.csv now. Remote: a .json beside the archive becomes the index line at -Collect.
@@ -415,6 +610,6 @@ if ($exitCode) {
     exit $exitCode
 }
 Say ''
-Say 'Rebooting in 60 seconds. After the reboot the Kaseya agent is repaired for the new name and the build check is added to this log.'
+Say "Rebooting in 60 seconds. After the reboot $(if ($hasAgent) { 'the Kaseya agent is uninstalled and ' })the build check is added to this log."
 & shutdown.exe /r /t 60 /c "MerionIT reset: restarting to finish the rename" | Out-Null
 exit 0
