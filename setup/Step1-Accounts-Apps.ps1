@@ -185,10 +185,12 @@ if ((Test-Path "$MerionITRoot\.agent-repair-pending") -and -not $SkipAgent) {
 }
 
 if (Test-Path $CompletionMarker) {
-    # Re-scrub immediately, before anything else - if bootstrap.ps1 was re-run for an unrelated
-    # reason and its sync happened to restore a blueprint file, it doesn't get to survive this.
-    Remove-SetupBlueprintFiles -Root $MerionITRoot
-
+    # The blueprint files are scrubbed only when we STOP here (N below). Continuing re-runs the account
+    # step, which needs setup\DefaultAccounts.ps1, and the scrub after it (Remove-SetupBlueprintFiles
+    # further down) removes them again. Scrubbing here unconditionally deleted DefaultAccounts.ps1 a few
+    # lines before it was called: every re-run on a finished machine (Setup.bat, or a second
+    # Reset-ForNewUser) died with "DefaultAccounts.ps1 is not recognized". Seen on MRQ7500-LT101
+    # 2026-11-12, second reset.
     $completedOn = Get-Content $CompletionMarker -Raw
     Write-Warning "This machine looks already set up (completed $completedOn)."
     if ($Unattended) {
@@ -198,6 +200,9 @@ if (Test-Path $CompletionMarker) {
         $confirm = Read-Host "Re-running will reapply tweaks and may reset Start Menu/taskbar customizations. Continue? [Y/N]"
     }
     if ($confirm -notmatch '^[Yy]') {
+        # If bootstrap.ps1 was re-run for an unrelated reason and its sync restored a blueprint file,
+        # it doesn't get to survive this.
+        Remove-SetupBlueprintFiles -Root $MerionITRoot
         Write-Host "Stopping here. If you just need to add a user or refresh an app, run SingleUser.ps1 / Install-Apps.ps1 directly instead."
         return
     }
