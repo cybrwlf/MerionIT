@@ -6,6 +6,11 @@ manufacturer rather than assuming.
 
   Dell           remove Dell Optimizer, Purchased Apps and SupportAssist, install Dell Command
                  Update, tame it, run it. Dell Trusted Device is kept on purpose.
+                 DCU and its prerequisite (.NET Desktop Runtime 10.0.8+) are downloaded fresh when
+                 missing (2026-11-12): DCU from Dell's update catalog for this exact model, .NET from
+                 Microsoft's release metadata. Both are checked against the publisher's own hash and
+                 signature before they run. A copy in C:\MerionIT\apps is only used when there is no
+                 internet. See Get-DcuFromDellCatalog below.
   anything else  no-op - Windows Update already handles drivers, configured in basic10-11stuff.ps1
 
 That is not a cop-out for the non-Dell case. Verified on MRM8065-DT201 2026-09-22: with the WU
@@ -49,11 +54,9 @@ WHAT DELL COSTS YOU, so this is a decision and not a surprise:
 #>
 
 param(
-    # Where to get the DCU installer when C:\MerionIT\apps has no copy, which is every machine
-    # reached remotely rather than from the build USB. There is no default on purpose: dl.dell.com
-    # 403s scripted requests and Dell's driver pages 403/404 them too, so a working URL cannot be
-    # derived at runtime and guessing one would be worse than asking. Point this at wherever Merion
-    # hosts the installer.
+    # Optional override: a specific DCU installer URL. Normally NOT needed: since 2026-11-12 the
+    # newest DCU for this model is found in Dell's update catalog and downloaded automatically
+    # (Get-DcuFromDellCatalog). Use this only to pin a particular build.
     [string]$DcuInstallerUrl,
 
     # Expected SHA-256 of whatever $DcuInstallerUrl serves. The download is REFUSED if it does not
@@ -209,18 +212,112 @@ function Get-DcuCli {
     }
     return (Join-Path ${env:ProgramFiles(x86)} 'Dell\CommandUpdate\dcu-cli.exe')
 }
+
+# --- Fresh downloads (added 2026-11-12) ---------------------------------------------
+# The old notes here said Dell 403s scripted downloads. That is true of Dell's SUPPORT PAGES (still 403
+# with a browser user agent, retested 2026-11-12) but not of Dell's update CATALOG at
+# downloads.dell.com/catalog, the feed Dell's own tools read. It has one catalog per model, keyed by
+# the BIOS system ID (Win32_ComputerSystem.SystemSKUNumber, e.g. 0A21 = Latitude 5520), listing every
+# Dell Command Update release with its downloads.dell.com path and SHA-256. Tested 2026-11-12 from a
+# plain script: DCU 5.7.2 (WYJ59) downloaded in 8 s, hash matched the catalog, Dell signature Valid.
+# Chain of trust: HTTPS index -> model catalog checked against the index's SHA-256 -> installer checked
+# against the model catalog's SHA-256 AND a valid Dell Authenticode signature. Any mismatch = not run.
+function Get-DcuFromDellCatalog {
+    $work = Join-Path $env:TEMP 'merionit-dell-catalog'
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $ProgressPreference = 'SilentlyContinue'
+        New-Item -ItemType Directory -Path $work -Force | Out-Null
+        $sku = (Get-CimInstance Win32_ComputerSystem).SystemSKUNumber
+        if (-not $sku) { Write-Warning "  Dell catalog: this machine reports no system ID (SystemSKUNumber)."; return $null }
+        Write-Host "  Looking up Dell Command Update in Dell's catalog (system ID $sku)..."
+        Invoke-WebRequest -UseBasicParsing -Uri 'https://downloads.dell.com/catalog/CatalogIndexPC.cab' -OutFile "$work\index.cab" -TimeoutSec 120 -ErrorAction Stop
+        & expand.exe "$work\index.cab" "$work\index.xml" | Out-Null
+        [xml]$index = Get-Content "$work\index.xml" -Raw -ErrorAction Stop
+        $group = @($index.ManifestIndex.GroupManifest) |
+                 Where-Object { @($_.SupportedSystems.Brand.Model | ForEach-Object { $_.systemID }) -contains $sku } | Select-Object -First 1
+        if (-not $group) { Write-Warning "  Dell catalog: no model catalog for system ID $sku."; return $null }
+        $info = $group.ManifestInformation
+        Invoke-WebRequest -UseBasicParsing -Uri "https://downloads.dell.com/$($info.path)" -OutFile "$work\model.cab" -TimeoutSec 120 -ErrorAction Stop
+        $want = (@($info.Cryptography.Hash) | Where-Object { $_.algorithm -eq 'SHA256' } | Select-Object -First 1).'#text'
+        if (-not $want -or (Get-FileHash "$work\model.cab" -Algorithm SHA256).Hash -ne $want.ToUpper()) {
+            Write-Warning "  Dell catalog: model catalog hash does not match the index - not trusted."; return $null
+        }
+        & expand.exe "$work\model.cab" "$work\model.xml" | Out-Null
+        [xml]$cat = Get-Content "$work\model.xml" -Raw -ErrorAction Stop
+        # Newest version; at the same version the classic build (what Merion has always used) wins
+        # over the Universal (Store-style) one. ARM builds are skipped.
+        $pick = @($cat.Manifest.SoftwareComponent) |
+                Where-Object { $_.Name.Display.InnerText.Trim() -eq 'Dell Command | Update' -and $_.ComponentType.value -eq 'APAC' -and $_.path -notmatch 'ARM' } |
+                Sort-Object @{ Expression = { [version]$_.vendorVersion } }, @{ Expression = { $_.path -notmatch 'Universal' } } -Descending |
+                Select-Object -First 1
+        if (-not $pick) { Write-Warning "  Dell catalog: no Dell Command Update listed for this model."; return $null }
+        $out = Join-Path $work (Split-Path $pick.path -Leaf)
+        $url = "https://$($cat.Manifest.baseLocation)/$($pick.path)"
+        Write-Host "    newest: $($pick.vendorVersion) $($pick.dellVersion) ($($pick.releaseDate)) - downloading $('{0:N0}' -f [long]$pick.size) bytes"
+        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $out -TimeoutSec 900 -ErrorAction Stop
+        $wantExe = (@($pick.Cryptography.Hash) | Where-Object { $_.algorithm -eq 'SHA256' } | Select-Object -First 1).'#text'
+        $gotExe = (Get-FileHash $out -Algorithm SHA256).Hash
+        if (-not $wantExe -or $gotExe -ne $wantExe.ToUpper()) {
+            Write-Warning "    REFUSING it: SHA-256 $gotExe does not match Dell's catalog ($wantExe)."; return $null
+        }
+        $sig = Get-AuthenticodeSignature $out
+        if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Dell') {
+            Write-Warning "    REFUSING it: signature $($sig.Status), signer $($sig.SignerCertificate.Subject)."; return $null
+        }
+        Write-Host "    SHA-256 matches Dell's catalog, signed by Dell."
+        return $out
+    } catch {
+        Write-Warning "  Dell catalog download failed: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+# .NET Desktop Runtime 10.0.8+, which DCU 5.7.2 refuses to install without. Nothing else in setup
+# installs it. Microsoft's release metadata gives the newest 10.0 build's direct link and SHA-512.
+function Test-DotnetDesktop10 {
+    $dir = Join-Path $env:ProgramFiles "dotnet\shared\Microsoft.WindowsDesktop.App"
+    [bool](Get-ChildItem $dir -Directory -ErrorAction SilentlyContinue |
+           Where-Object { $_.Name -match '^10\.\d+\.\d+$' -and [version]$_.Name -ge [version]'10.0.8' })
+}
+function Install-DotnetDesktop10 {
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $ProgressPreference = 'SilentlyContinue'
+        $meta = Invoke-RestMethod -UseBasicParsing -Uri 'https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json' -TimeoutSec 60 -ErrorAction Stop
+        $rel = @($meta.releases) | Where-Object { $_.'release-version' -eq $meta.'latest-release' } | Select-Object -First 1
+        $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+        $file = @($rel.windowsdesktop.files) | Where-Object { $_.name -eq "windowsdesktop-runtime-win-$arch.exe" } | Select-Object -First 1
+        if (-not $file) { Write-Warning "  .NET: no Desktop Runtime $arch installer in Microsoft's release list."; return }
+        $out = Join-Path $env:TEMP (Split-Path $file.url -Leaf)
+        Write-Host "  Downloading .NET Desktop Runtime $($rel.'release-version') ($arch) from Microsoft..."
+        Invoke-WebRequest -UseBasicParsing -Uri $file.url -OutFile $out -TimeoutSec 600 -ErrorAction Stop
+        if ((Get-FileHash $out -Algorithm SHA512).Hash -ne $file.hash.ToUpper()) {
+            Write-Warning "    REFUSING it: SHA-512 does not match Microsoft's release list."; Remove-Item $out -Force -ErrorAction SilentlyContinue; return
+        }
+        $sig = Get-AuthenticodeSignature $out
+        if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+            Write-Warning "    REFUSING it: signature $($sig.Status), signer $($sig.SignerCertificate.Subject)."; Remove-Item $out -Force -ErrorAction SilentlyContinue; return
+        }
+        Write-Host "    SHA-512 matches, signed by Microsoft. Installing (silent)..."
+        $p = Start-Process $out -ArgumentList '/install', '/quiet', '/norestart' -Wait -PassThru
+        Write-Host "    installer exit: $($p.ExitCode)   (0 or 3010 = success)"
+        Remove-Item $out -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Warning "  .NET download/install failed: $($_.Exception.Message)"
+    }
+}
+
 $dcuCli = Get-DcuCli
 
 if (-not (Test-Path $dcuCli)) {
-    # DCU 5.7.2 requires .NET Desktop Runtime 10.0 >= 10.0.8. Its installer refuses without it,
-    # so check before wasting time on an install that cannot succeed.
-    $dotnetDir = Join-Path $env:ProgramFiles "dotnet\shared\Microsoft.WindowsDesktop.App"
-    $haveDotnet = $false
-    if (Test-Path $dotnetDir) {
-        $haveDotnet = [bool](Get-ChildItem $dotnetDir -Directory -ErrorAction SilentlyContinue |
-                             Where-Object { $_.Name -match '^10\.' -and [version]$_.Name -ge [version]'10.0.8' })
+    # DCU 5.7.2 requires .NET Desktop Runtime 10.0 >= 10.0.8. Its installer refuses without it, so
+    # install it first (fresh from Microsoft) rather than waste time on an install that cannot succeed.
+    if (-not (Test-DotnetDesktop10)) {
+        Write-Host "  .NET Desktop Runtime 10.0.8+ missing - DCU needs it."
+        Install-DotnetDesktop10
     }
-    if (-not $haveDotnet) {
+    if (-not (Test-DotnetDesktop10)) {
         Write-Warning "  .NET Desktop Runtime 10.0.8+ missing - DCU 5.7.2 will not install."
         Add-ReminderIfMissing "[ ] Install .NET Desktop Runtime 10.0.8+ then rerun tweaks\vendor-drivers.ps1 (Dell Command Update needs it)"
         Write-Host "======================================="
@@ -257,16 +354,35 @@ if (-not (Test-Path $dcuCli)) {
         }
     }
 
-    # Staged on the USB rather than committed - the installer is ~86 MB. Downloading it here is
-    # possible but dl.dell.com returns 403 to the default PowerShell user agent, and a freshly
-    # imaged machine's network is not guaranteed.
-    $installer = Get-ChildItem "C:\MerionIT\apps" -Filter "Dell-Command-Update*.EXE" -ErrorAction SilentlyContinue |
-                 Sort-Object Name -Descending | Select-Object -First 1
-    if ($installer) {
-        Write-Host "  Installing $($installer.Name) (silent, 5-7 min)..."
-        $p = Start-Process $installer.FullName -ArgumentList @('/s') -Wait -PassThru
+    # Where the installer comes from, in order (2026-11-12):
+    #   1. -DcuInstallerUrl, when given (explicit override, handled further down).
+    #   2. A fresh download from Dell's catalog for this model (Get-DcuFromDellCatalog).
+    #   3. A copy in C:\MerionIT\apps, only when 2 is not possible (no internet). Must be Dell-signed.
+    $installerPath = $null
+    $downloaded = $false
+    if (-not $DcuInstallerUrl) {
+        $installerPath = Get-DcuFromDellCatalog
+        $downloaded = [bool]$installerPath
+        if (-not $installerPath) {
+            $installer = Get-ChildItem "C:\MerionIT\apps" -Filter "Dell-Command-Update*.EXE" -ErrorAction SilentlyContinue |
+                         Sort-Object Name -Descending | Select-Object -First 1
+            if ($installer) {
+                $sig = Get-AuthenticodeSignature $installer.FullName
+                if ($sig.Status -eq 'Valid' -and $sig.SignerCertificate.Subject -match 'Dell') {
+                    Write-Host "  Using the copy in C:\MerionIT\apps instead: $($installer.Name)"
+                    $installerPath = $installer.FullName
+                } else {
+                    Write-Warning "  Not using $($installer.FullName): signature $($sig.Status)."
+                }
+            }
+        }
+    }
+    if ($installerPath) {
+        Write-Host "  Installing $(Split-Path $installerPath -Leaf) (silent, 5-7 min)..."
+        $p = Start-Process $installerPath -ArgumentList @('/s') -Wait -PassThru
         Write-Host "    installer exit: $($p.ExitCode)"
         Start-Sleep -Seconds 10
+        if ($downloaded) { Remove-Item (Split-Path $installerPath -Parent) -Recurse -Force -ErrorAction SilentlyContinue }
     }
     elseif ($DcuInstallerUrl) {
         # Download + verify. Replaces the winget fallback, which was removed 2026-09-30 - see the
@@ -319,11 +435,10 @@ if (-not (Test-Path $dcuCli)) {
         # as a real elevated user, on a machine whose winget sources had not been touched since
         # 2023. Two independent reasons, so no amount of flag-tuning saves it.
         $isSystem = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value -eq 'S-1-5-18'
-        Write-Warning "  No installer in C:\MerionIT\apps and no -DcuInstallerUrl given."
+        Write-Warning "  Dell Command Update could not be downloaded from Dell's catalog and there is no copy in C:\MerionIT\apps."
         Write-Host    "    Running as SYSTEM : $isSystem"
-        Write-Host    "    Supply -DcuInstallerUrl and -DcuInstallerSha256, or stage the installer"
-        Write-Host    "    into C:\MerionIT\apps first."
-        Add-ReminderIfMissing "[ ] Dell Command Update not installed - no installer available. Stage it in C:\MerionIT\apps or pass -DcuInstallerUrl."
+        Write-Host    "    Check internet access to downloads.dell.com and rerun this script."
+        Add-ReminderIfMissing "[ ] Dell Command Update not installed - download from Dell's catalog failed. Check internet, then rerun tweaks\vendor-drivers.ps1"
     }
 
     # Re-resolve: a fresh install may land in either Program Files folder.

@@ -16,14 +16,15 @@
        ("waiting for a new user"): MRQ7582-LT301 -> MRQ7500-LT301. MRM (property code) and MITLOAN keep
        their name. Anything else is refused before a single change is made.
     DELL. Step 2 runs tweaks\vendor-drivers.ps1, which installs Dell Command Update and only THEN removes
-       SupportAssist (removing it first once left a machine with no Dell driver tool). It cannot download
-       DCU (Dell 403s scripted downloads), it needs Dell-Command-Update*.EXE in C:\MerionIT\apps and .NET
-       Desktop Runtime 10.0.8+. MRQ7588-LT101's first reset (2026-11-12) ran from a USB folder with no
-       installer, so DCU was skipped and SupportAssist stayed. Now, on a Dell without DCU, this script
-       finds the installer before changing anything: <repo>\apps first, then any <USB>\*\apps folder,
-       then C:\MerionIT\apps. It must be signed by Dell. It is copied into C:\MerionIT\apps after the
-       refresh. No installer or no .NET 10.0.8+ = a USB run stops (override: -SkipDellUpdate); a remote
-       run only warns in the log.
+       SupportAssist (removing it first once left a machine with no Dell driver tool). MRQ7588-LT101's
+       first reset (2026-11-12) skipped DCU because vendor-drivers.ps1 could only use a copy in
+       C:\MerionIT\apps and there was none, so SupportAssist stayed. Since then vendor-drivers.ps1
+       downloads the newest DCU for the model from Dell's update catalog, and .NET Desktop Runtime 10
+       from Microsoft when missing, each checked against the publisher's hash and signature. So on a
+       Dell without DCU this script only checks, before changing anything, that downloads.dell.com (and
+       builds.dotnet.microsoft.com, if .NET 10.0.8+ is missing) can be reached. Offline, a Dell-signed
+       Dell-Command-Update*.EXE in <repo>\apps, any <USB>\*\apps or C:\MerionIT\apps is copied in and
+       used instead. Neither possible = a USB run stops (override: -SkipDellUpdate); remote only warns.
     3. STANDARDS. C:\MerionIT is refreshed first (setup deletes RenamePC/DefaultAccounts after a build, so
        an old copy cannot re-run setup), then:
          USB    : the full setup, setup\Step1-Accounts-Apps.ps1 -Unattended (Step 2 included), no named user.
@@ -79,8 +80,8 @@
 .PARAMETER SkipRefresh
     Use C:\MerionIT as it is: no copy from USB, no GitHub pull. For testing scripts not yet pushed.
 .PARAMETER SkipDellUpdate
-    On a Dell, go ahead even though Dell Command Update cannot be installed (no installer found, or
-    .NET Desktop Runtime 10.0.8+ missing). SupportAssist is then left in place, by design of
+    On a Dell, go ahead even though Dell Command Update cannot be installed (offline with no installer
+    on the USB, or .NET Desktop Runtime 10.0.8+ missing with Microsoft unreachable). SupportAssist is then left in place, by design of
     tweaks\vendor-drivers.ps1. Without this switch a USB run stops before changing anything.
 .PARAMETER Force
     No confirmation prompt. Implied by -Remote.
@@ -404,30 +405,36 @@ if ($isDell) {
     if ($dcuCli) {
         Say "Dell Cmd Update: already installed ($dcuCli) - Step 2 removes SupportAssist"
     } else {
-        $dcuDirs = @()
-        if (-not $remoteMode) {
-            $dcuDirs += Join-Path $repoRoot 'apps'
-            $dcuDirs += @(Get-ChildItem "$($UsbRoot.TrimEnd('\'))\*\apps" -Directory -ErrorAction SilentlyContinue | ForEach-Object FullName)
-        }
-        $dcuDirs += "$MerionITRoot\apps"
-        foreach ($f in @($dcuDirs | Select-Object -Unique | ForEach-Object { Get-ChildItem -LiteralPath $_ -Filter 'Dell-Command-Update*.EXE' -File -ErrorAction SilentlyContinue } | Sort-Object Name -Descending)) {
-            $sig = Get-AuthenticodeSignature -FilePath $f.FullName -ErrorAction SilentlyContinue
-            if ($sig.Status -eq 'Valid' -and $sig.SignerCertificate.Subject -match 'Dell') { $dcuInstaller = $f; break }
-            Say "Dell Cmd Update: ignoring $($f.FullName) (signature: $($sig.Status))"
-        }
-        # Same check vendor-drivers.ps1 makes: DCU 5.7.2 will not install without it.
+        # Step 2 downloads DCU fresh from Dell's catalog (and .NET 10 from Microsoft if missing). All this
+        # needs is the internet. A Dell-signed copy on the USB is only the offline fallback.
+        $canReach = { param($h) [bool](Test-NetConnection $h -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue) }
+        $dellOnline = & $canReach 'downloads.dell.com'
         $dotnetDir = "$env:ProgramFiles\dotnet\shared\Microsoft.WindowsDesktop.App"
         $haveDotnet = [bool](Get-ChildItem $dotnetDir -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^10\.' -and [version]$_.Name -ge [version]'10.0.8' })
+            Where-Object { $_.Name -match '^10\.\d+\.\d+$' -and [version]$_.Name -ge [version]'10.0.8' })
+        $dotnetOnline = $haveDotnet -or (& $canReach 'builds.dotnet.microsoft.com')
+        if (-not $dellOnline) {
+            $dcuDirs = @()
+            if (-not $remoteMode) {
+                $dcuDirs += Join-Path $repoRoot 'apps'
+                $dcuDirs += @(Get-ChildItem "$($UsbRoot.TrimEnd('\'))\*\apps" -Directory -ErrorAction SilentlyContinue | ForEach-Object FullName)
+            }
+            $dcuDirs += "$MerionITRoot\apps"
+            foreach ($f in @($dcuDirs | Select-Object -Unique | ForEach-Object { Get-ChildItem -LiteralPath $_ -Filter 'Dell-Command-Update*.EXE' -File -ErrorAction SilentlyContinue } | Sort-Object Name -Descending)) {
+                $sig = Get-AuthenticodeSignature -FilePath $f.FullName -ErrorAction SilentlyContinue
+                if ($sig.Status -eq 'Valid' -and $sig.SignerCertificate.Subject -match 'Dell') { $dcuInstaller = $f; break }
+            }
+        }
         $dcuProblem = @()
-        if (-not $dcuInstaller) { $dcuProblem += "no Dell-Command-Update*.EXE in $($dcuDirs -join ', ')" }
-        if (-not $haveDotnet) { $dcuProblem += '.NET Desktop Runtime 10.0.8+ is not installed (DCU needs it)' }
+        if (-not $dellOnline -and -not $dcuInstaller) { $dcuProblem += 'downloads.dell.com is not reachable and there is no Dell Command Update installer on the USB' }
+        if (-not $dotnetOnline) { $dcuProblem += '.NET Desktop Runtime 10.0.8+ is not installed and builds.dotnet.microsoft.com is not reachable' }
         if (-not $dcuProblem) {
-            Say "Dell Cmd Update: installer $($dcuInstaller.FullName) - Step 2 installs it, then removes SupportAssist"
+            $how = if ($dellOnline) { "downloads the newest from Dell's catalog" } else { "installs $($dcuInstaller.FullName) (offline)" }
+            Say "Dell Cmd Update: Step 2 $how$(if (-not $haveDotnet) { ' (after installing .NET 10 from Microsoft)' }), then removes SupportAssist"
         } elseif ($SkipDellUpdate -or $remoteMode) {
             Say "Dell Cmd Update: WARNING $($dcuProblem -join '; '). DCU is skipped and SupportAssist stays."
         } else {
-            $problems += "Dell Command Update could not be installed: $($dcuProblem -join '; '). Put the installer in $(Join-Path $repoRoot 'apps') (it is not in git, ~90 MB) and/or install .NET Desktop Runtime 10.0.8+, or run with -SkipDellUpdate to leave DCU out and SupportAssist in"
+            $problems += "Dell Command Update could not be installed: $($dcuProblem -join '; '). Connect to the internet and run again, or run with -SkipDellUpdate to leave DCU out and SupportAssist in"
         }
     }
 }
