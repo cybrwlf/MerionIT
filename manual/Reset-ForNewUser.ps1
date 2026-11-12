@@ -15,6 +15,15 @@
     2. NAME. MRQ / MRP / MIP: the 4 digits are the user's phone extension, so they become 7500
        ("waiting for a new user"): MRQ7582-LT301 -> MRQ7500-LT301. MRM (property code) and MITLOAN keep
        their name. Anything else is refused before a single change is made.
+    DELL. Step 2 runs tweaks\vendor-drivers.ps1, which installs Dell Command Update and only THEN removes
+       SupportAssist (removing it first once left a machine with no Dell driver tool). It cannot download
+       DCU (Dell 403s scripted downloads), it needs Dell-Command-Update*.EXE in C:\MerionIT\apps and .NET
+       Desktop Runtime 10.0.8+. MRQ7588-LT101's first reset (2026-11-12) ran from a USB folder with no
+       installer, so DCU was skipped and SupportAssist stayed. Now, on a Dell without DCU, this script
+       finds the installer before changing anything: <repo>\apps first, then any <USB>\*\apps folder,
+       then C:\MerionIT\apps. It must be signed by Dell. It is copied into C:\MerionIT\apps after the
+       refresh. No installer or no .NET 10.0.8+ = a USB run stops (override: -SkipDellUpdate); a remote
+       run only warns in the log.
     3. STANDARDS. C:\MerionIT is refreshed first (setup deletes RenamePC/DefaultAccounts after a build, so
        an old copy cannot re-run setup), then:
          USB    : the full setup, setup\Step1-Accounts-Apps.ps1 -Unattended (Step 2 included), no named user.
@@ -69,6 +78,10 @@
     At HQ: move the archives in C:\MerionIT\offboard to <UsbRoot>\MerionIT-Offboard.
 .PARAMETER SkipRefresh
     Use C:\MerionIT as it is: no copy from USB, no GitHub pull. For testing scripts not yet pushed.
+.PARAMETER SkipDellUpdate
+    On a Dell, go ahead even though Dell Command Update cannot be installed (no installer found, or
+    .NET Desktop Runtime 10.0.8+ missing). SupportAssist is then left in place, by design of
+    tweaks\vendor-drivers.ps1. Without this switch a USB run stops before changing anything.
 .PARAMETER Force
     No confirmation prompt. Implied by -Remote.
 
@@ -92,11 +105,12 @@ param(
     [switch]$Collect,
     [switch]$SkipRefresh,
     [switch]$Force,
+    [switch]$SkipDellUpdate,
     # Internal: run by the startup task after the reboot.
     [switch]$AfterReboot
 )
 
-$ScriptVersion = '2026-11-12.1'
+$ScriptVersion = '2026-11-12.2'
 $dryRun = [bool]$WhatIfPreference
 $WhatIfPreference = $false
 
@@ -382,6 +396,41 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 if (-not $remoteMode -and -not $SkipRefresh -and -not (Test-Path (Join-Path $repoRoot 'setup\Step1-Accounts-Apps.ps1'))) {
     $problems += "no repo next to this script ($repoRoot) to refresh C:\MerionIT from (use -SkipRefresh to use C:\MerionIT as it is)"
 }
+# --- Dell: Step 2's vendor-drivers.ps1 needs the DCU installer in C:\MerionIT\apps (see DELL above).
+$isDell = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).Manufacturer -match 'Dell'
+$dcuInstaller = $null
+if ($isDell) {
+    $dcuCli = @("$env:ProgramFiles\Dell\CommandUpdate\dcu-cli.exe", "${env:ProgramFiles(x86)}\Dell\CommandUpdate\dcu-cli.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($dcuCli) {
+        Say "Dell Cmd Update: already installed ($dcuCli) - Step 2 removes SupportAssist"
+    } else {
+        $dcuDirs = @()
+        if (-not $remoteMode) {
+            $dcuDirs += Join-Path $repoRoot 'apps'
+            $dcuDirs += @(Get-ChildItem "$($UsbRoot.TrimEnd('\'))\*\apps" -Directory -ErrorAction SilentlyContinue | ForEach-Object FullName)
+        }
+        $dcuDirs += "$MerionITRoot\apps"
+        foreach ($f in @($dcuDirs | Select-Object -Unique | ForEach-Object { Get-ChildItem -LiteralPath $_ -Filter 'Dell-Command-Update*.EXE' -File -ErrorAction SilentlyContinue } | Sort-Object Name -Descending)) {
+            $sig = Get-AuthenticodeSignature -FilePath $f.FullName -ErrorAction SilentlyContinue
+            if ($sig.Status -eq 'Valid' -and $sig.SignerCertificate.Subject -match 'Dell') { $dcuInstaller = $f; break }
+            Say "Dell Cmd Update: ignoring $($f.FullName) (signature: $($sig.Status))"
+        }
+        # Same check vendor-drivers.ps1 makes: DCU 5.7.2 will not install without it.
+        $dotnetDir = "$env:ProgramFiles\dotnet\shared\Microsoft.WindowsDesktop.App"
+        $haveDotnet = [bool](Get-ChildItem $dotnetDir -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^10\.' -and [version]$_.Name -ge [version]'10.0.8' })
+        $dcuProblem = @()
+        if (-not $dcuInstaller) { $dcuProblem += "no Dell-Command-Update*.EXE in $($dcuDirs -join ', ')" }
+        if (-not $haveDotnet) { $dcuProblem += '.NET Desktop Runtime 10.0.8+ is not installed (DCU needs it)' }
+        if (-not $dcuProblem) {
+            Say "Dell Cmd Update: installer $($dcuInstaller.FullName) - Step 2 installs it, then removes SupportAssist"
+        } elseif ($SkipDellUpdate -or $remoteMode) {
+            Say "Dell Cmd Update: WARNING $($dcuProblem -join '; '). DCU is skipped and SupportAssist stays."
+        } else {
+            $problems += "Dell Command Update could not be installed: $($dcuProblem -join '; '). Put the installer in $(Join-Path $repoRoot 'apps') (it is not in git, ~90 MB) and/or install .NET Desktop Runtime 10.0.8+, or run with -SkipDellUpdate to leave DCU out and SupportAssist in"
+        }
+    }
+}
 $secretsSource = if ((-not $remoteMode) -and (Test-Path (Join-Path $repoRoot 'secrets.psd1'))) { Join-Path $repoRoot 'secrets.psd1' } else { $secretsPath }
 if (-not (Get-PcsAdminPassword @($secretsSource))) { $problems += "no PcsAdminPassword in $secretsSource$(if ($remoteMode) { ' (the Kaseya procedure writes it before running this)' })" }
 if ($problems -and $dryRun) {
@@ -470,6 +519,18 @@ try {
         }
     }
     if (-not $dryRun -and $secretsSource -ne $secretsPath) { Copy-Item -LiteralPath $secretsSource -Destination $secretsPath -Force }
+    # Dell Command Update installer where vendor-drivers.ps1 (Step 2) looks for it. Checked by hash.
+    if ($dcuInstaller -and -not $dryRun) {
+        $dcuTarget = Join-Path "$MerionITRoot\apps" $dcuInstaller.Name
+        if ($dcuInstaller.FullName -ine $dcuTarget) {
+            New-Item -ItemType Directory -Path "$MerionITRoot\apps" -Force | Out-Null
+            Say "Copying $($dcuInstaller.Name) to $MerionITRoot\apps for Step 2 ..."
+            Copy-Item -LiteralPath $dcuInstaller.FullName -Destination $dcuTarget -Force
+            if ((Get-FileHash -LiteralPath $dcuTarget).Hash -ne (Get-FileHash -LiteralPath $dcuInstaller.FullName).Hash) {
+                throw "copy of $($dcuInstaller.Name) to $MerionITRoot\apps does not match the original"
+            }
+        }
+    }
 
     # --- 2. Back up and remove each user.
     $backupScript = Get-ChildItem "$MerionITRoot\manual" -Filter 'backup-userfiles-*.ps1' | Sort-Object Name | Select-Object -Last 1
