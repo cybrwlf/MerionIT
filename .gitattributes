@@ -7,3 +7,6 @@
 *.ps1 text eol=crlf
 *.psd1 text eol=crlf
 *.reg text eol=crlf
+
+# Binary layout files (tweaks\start-layout). Never touch their bytes.
+*.bin binary

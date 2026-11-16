@@ -19,6 +19,8 @@
       2. Loads the hive, writes every value that differs, reads each one back and compares type and data.
       3. Unloads the hive and CHECKS it unloaded. A hive left mounted keeps NTUSER.DAT locked.
       4. (Default profile only) writes the taskbar layout and reads it back.
+      5. (Default profile, Windows 11 only) copies tweaks\start-layout\win11-start2.bin, the Start menu
+         pin layout, into the Default profile and checks the copy by hash. See tweaks\start-layout\README.md.
 
     Safe to run again: values already correct are left alone and reported as such.
 
@@ -42,6 +44,9 @@
 .PARAMETER SkipTaskbarLayout
     Seed registry values only.
 
+.PARAMETER SkipStartLayout
+    Leave the Start menu layout (start2.bin) alone.
+
 .PARAMETER PinPlacement
     Replace (default): the pin list is exactly File Explorer, Edge, Chrome, Word, Excel, Outlook (classic) and
     Outlook (new) and Snipping Tool, so the Microsoft Store pin is dropped. Add: keep Windows' own default pins and append
@@ -63,6 +68,7 @@ param(
     [string]$UserName,
     [switch]$ReportOnly,
     [switch]$SkipTaskbarLayout,
+    [switch]$SkipStartLayout,
     [ValidateSet('Replace', 'Add')]
     [string]$PinPlacement = 'Replace',
     [ValidateSet('DefaultProfile', 'OemPath')]
@@ -71,7 +77,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ScriptVersion = '2026-11-12.1'
+$ScriptVersion = '2026-11-16.1'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $problems = 0
 
@@ -134,6 +140,12 @@ foreach ($n in 'ContentDeliveryAllowed', 'OemPreInstalledAppsEnabled', 'PreInsta
     Add-Setting $cdm $n DWord 0
 }
 Add-Setting "$cv\UserProfileEngagement" 'ScoobeSystemSettingEnabled' DWord 0
+# Start > Recommended: no tips, shortcuts or app promotions (Settings > Personalization > Start, "Show
+# recommendations for tips..."). A plain user setting, so no "managed by your organization" banner.
+# It does NOT remove the "Get Started / Welcome to Windows" item: that is part of MicrosoftWindows.Client.CBS
+# (not removable), and the HideRecentlyAddedApps policy did not remove it either but did bring the
+# banner back. Tested on fresh profiles on MRQ3049-LT601 (Win11 26H2), 2026-11-16. Right-click > Remove from list.
+Add-Setting $adv 'Start_IrisRecommendations' DWord 0
 # Spotlight and tips on the lock screen, and sync-provider (OneDrive) ads in Explorer. These replaced
 # O&O ShutUp10's K001, K002 and M010 on 2026-11-12. Per-user on purpose: Microsoft's Spotlight policies
 # are ignored on Windows Pro (Policy CSP Experience: Enterprise and Education only).
@@ -467,8 +479,56 @@ if ($SkipTaskbarLayout -or $UserName) {
     Say 'Note    : pins apply when a NEW profile signs in for the first time. Accounts that already exist keep their taskbar.'
 }
 
+# ---- Start menu pins for new profiles (Windows 11) --------------------------------------------------
+# Windows 11 keeps a user's Start pins in start2.bin under the Start menu app's LocalState. A copy in the
+# Default profile is what every new profile starts from. The file in the repo is a hand-cleaned Start
+# menu (no promoted placeholders like XBOX, WhatsApp, Adobe Express). See tweaks\start-layout\README.md.
+$startState = 'skipped'
+if ($SkipStartLayout -or $UserName) {
+    if ($UserName) { Say ''; Say 'Start layout: not applied to an existing profile (it only takes effect at first logon).' }
+} elseif ([Environment]::OSVersion.Version.Build -lt 22000) {
+    $startState = 'win10'
+} else {
+    $startSrc = Join-Path $PSScriptRoot 'start-layout\win11-start2.bin'
+    $startDst = 'C:\Users\Default\AppData\Local\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\LocalState\start2.bin'
+    Say ''
+    Say '--- START LAYOUT (Windows 11) ---'
+    Say "File    : $startDst"
+    if (-not (Test-Path -LiteralPath $startSrc)) {
+        $startState = 'missing'
+        Say "Start   : $startSrc not found. Run Update-Scripts.bat."
+        if (-not $ReportOnly) { $problems++ }
+    } else {
+        $wantHash = (Get-FileHash -LiteralPath $startSrc -Algorithm SHA256).Hash
+        $haveHash = if (Test-Path -LiteralPath $startDst) { (Get-FileHash -LiteralPath $startDst -Algorithm SHA256).Hash } else { '' }
+        if ($haveHash -eq $wantHash) {
+            $startState = 'ok'
+            Say 'Start   : already matches, left alone.'
+        } elseif ($ReportOnly) {
+            $startState = 'differs'
+            Say "Start   : $(if ($haveHash) { 'differs from' } else { 'not present, would copy' }) tweaks\start-layout\win11-start2.bin."
+        } else {
+            if ($haveHash) {
+                New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
+                Copy-Item -LiteralPath $startDst -Destination (Join-Path $BackupDir "Default-start2.bin.$stamp.bak") -Force
+            }
+            New-Item -ItemType Directory -Path (Split-Path $startDst -Parent) -Force | Out-Null
+            Copy-Item -LiteralPath $startSrc -Destination $startDst -Force
+            if ((Get-FileHash -LiteralPath $startDst -Algorithm SHA256).Hash -eq $wantHash) {
+                $startState = 'ok'
+                Say 'Start   : copied and verified (SHA-256 matches).'
+            } else {
+                $startState = 'differs'
+                $problems++
+                Say 'ERROR   : the copied start2.bin does not match the repo file.'
+            }
+        }
+    }
+    Say 'Note    : Start pins apply when a NEW profile signs in for the first time. Apps that are not installed are left out.'
+}
+
 Say ''
 $mode = if ($ReportOnly) { 'report' } else { 'apply' }
-Say "RESULT|$env:COMPUTERNAME|target=$target|values=$($Settings.Count)|same=$($res.Same)|changed=$($res.Changed)|notverified=$($res.Wrong.Count)|optionalskipped=$($res.Blocked.Count)|layout=$layoutState|problems=$problems|mode=$mode|v=$ScriptVersion"
+Say "RESULT|$env:COMPUTERNAME|target=$target|values=$($Settings.Count)|same=$($res.Same)|changed=$($res.Changed)|notverified=$($res.Wrong.Count)|optionalskipped=$($res.Blocked.Count)|layout=$layoutState|start=$startState|problems=$problems|mode=$mode|v=$ScriptVersion"
 if ($problems -gt 0) { exit 2 }
 exit 0

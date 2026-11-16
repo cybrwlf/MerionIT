@@ -7,6 +7,8 @@
 [ ] OneDrive: sign in, back up Desktop, Documents, Pictures
 [ ] Location (Settings > Privacy & security): turn on
     "Let apps access your location" if they need it
+[ ] Windows 11 Start: right-click "Get Started" under
+    Recommended > Remove from list
 [ ] Kaseya portal: confirm this computer is listed
 
 ======================================================

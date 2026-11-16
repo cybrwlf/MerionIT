@@ -27,12 +27,15 @@
        used instead. Neither possible = a USB run stops (override: -SkipDellUpdate); remote only warns.
     3. STANDARDS. C:\MerionIT is refreshed first (setup deletes RenamePC/DefaultAccounts after a build, so
        an old copy cannot re-run setup), then:
-         USB    : the full setup, setup\Step1-Accounts-Apps.ps1 -Unattended (Step 2 included), no named user.
+         USB    : the full setup, setup\Step1-Accounts-Apps.ps1 -Unattended (Step 2 included), no named user,
+                  then the Default profile (added 2026-11-16: the full setup only reaches pcsadmin, so a new
+                  account made by hand afterwards got plain Windows).
          Remote : only the parts that apply to the whole machine, because nobody is signed in (Kaseya runs
                   this as SYSTEM): accounts, BGInfo, apps, Office, bloat / McAfee removal, Windows Update
                   cache, vendor drivers, power plan, Windows Update policy, Set-MerionStandards and the
                   Default profile (whoever signs in first gets the per-user settings and taskbar pins from
-                  it, as with Add-User.bat). Per-user Start menu / taskbar tweaks are not run.
+                  it, as with Add-User.bat; Start menu pins too on Windows 11). Per-user Start menu / taskbar
+                  tweaks are not run.
     4. REBOOT, then a startup task (SYSTEM) UNINSTALLS the Kaseya agent, runs tools\Test-MerionBuild.ps1,
        adds both results to the log and removes itself. A reset laptop goes on the shelf, and a shelved
        machine must not keep an agent (Ricardo, 2026-11-12). Setup.bat for the new user downloads and
@@ -111,7 +114,7 @@ param(
     [switch]$AfterReboot
 )
 
-$ScriptVersion = '2026-11-12.2'
+$ScriptVersion = '2026-11-16.1'
 $dryRun = [bool]$WhatIfPreference
 $WhatIfPreference = $false
 
@@ -636,6 +639,14 @@ try {
         # Always -SkipAgent: the agent is uninstalled after the reboot, Setup.bat for the new user installs it.
         $step1Args = @{ Unattended = $true; SkipAgent = $true }
         & "$MerionITRoot\setup\Step1-Accounts-Apps.ps1" @step1Args *>&1 | ForEach-Object { Say "   $_" }
+        # Step 1/2 put the per-user settings on the account running this (pcsadmin) only. The next user's
+        # account is new, so it is built from the Default profile: seed it, same as remote mode does.
+        # Without this, the new user got plain Windows (centered Start, promoted apps, no pins) - MRQ3049-LT601, 2026-11-16.
+        Say ''
+        Say '== Default profile for the next user'
+        try {
+            & (Get-ChildItem "$MerionITRoot\tweaks" -Filter 'Set-DefaultUserProfile-*.ps1' | Sort-Object Name | Select-Object -Last 1).FullName *>&1 | ForEach-Object { Say "   $_" }
+        } catch { Say "   ERROR: $($_.Exception.Message)"; $exitCode = 2 }
     }
 } catch {
     Say "STOPPED: $($_.Exception.Message)"
