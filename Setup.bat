@@ -46,9 +46,10 @@ echo Copying %SRC% to %DEST% ...
 robocopy "%SRC%." "%DEST%" /E /XD .git /NFL /NDL /NJH /NP
 if %errorlevel% geq 8 goto :copyfail
 REM Only after a good copy: delete loose files in the top of %DEST% that this copy doesn't ship
-REM (old builds, hand copies). Files only, never folders. These four stay: the credentials file, the
-REM "already set up" marker, the update manifest and the install log. Same list as bootstrap.ps1.
-powershell.exe -NoProfile -Command "$src='%SRC%'; $keep='secrets.psd1','.setup-complete','.repo-manifest.txt','InstallLog.csv'; Get-ChildItem -LiteralPath '%DEST%' -File -Force | Where-Object { ($keep -notcontains $_.Name) -and -not (Test-Path -LiteralPath (Join-Path $src $_.Name)) } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force; Write-Host ('Removed old root file: ' + $_.Name) }"
+REM (old builds, hand copies). Files only, never folders. These stay: the credentials file, the
+REM "already set up" marker, the update manifest, the install log, and the state markers Step 1 and
+REM Reset-ForNewUser leave for their next step (see bootstrap.ps1). Same list as bootstrap.ps1.
+powershell.exe -NoProfile -Command "$src='%SRC%'; $keep='secrets.psd1','.setup-complete','.repo-manifest.txt','InstallLog.csv','.agent-repair-pending','.agent-uninstall-pending','.reset-state.json'; Get-ChildItem -LiteralPath '%DEST%' -File -Force | Where-Object { ($keep -notcontains $_.Name) -and -not (Test-Path -LiteralPath (Join-Path $src $_.Name)) } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force; Write-Host ('Removed old root file: ' + $_.Name) }"
 goto :launch
 
 :fromdest

@@ -94,9 +94,13 @@ foreach ($rel in $newFiles) {
 
 # Loose files in the top of $Dest that this version doesn't ship: old builds, hand copies, USB copies
 # that never wrote a manifest. Files only - subfolders and everything in them are never touched.
-# These four stay: credentials, the "already set up" marker, this manifest, the install log.
-# Same list as the matching step in Setup.bat.
-$keepAtRoot = @('secrets.psd1', '.setup-complete', '.repo-manifest.txt', 'InstallLog.csv')
+# These stay: credentials, the "already set up" marker, this manifest, the install log, and the state
+# markers other scripts leave for their next step: .agent-repair-pending (Step 1, Kaseya repair after a
+# rename), .reset-state.json and .agent-uninstall-pending (Reset-ForNewUser, read after its reboot).
+# Deleting those made the reset's after-reboot step run blind on MRQ7588-LT601, 2026-11-16 (Setup.bat
+# was run between the reset and its reboot). Same list as the matching step in Setup.bat.
+$keepAtRoot = @('secrets.psd1', '.setup-complete', '.repo-manifest.txt', 'InstallLog.csv',
+                '.agent-repair-pending', '.agent-uninstall-pending', '.reset-state.json')
 $shippedAtRoot = @($newFiles | Where-Object { $_ -notlike '*\*' })
 Get-ChildItem -Path $Dest -File -Force | Where-Object {
     ($keepAtRoot -notcontains $_.Name) -and ($shippedAtRoot -notcontains $_.Name)

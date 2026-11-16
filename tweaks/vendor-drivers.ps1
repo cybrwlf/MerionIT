@@ -247,8 +247,13 @@ function Get-DcuFromDellCatalog {
         [xml]$cat = Get-Content "$work\model.xml" -Raw -ErrorAction Stop
         # Newest version; at the same version the classic build (what Merion has always used) wins
         # over the Universal (Store-style) one. ARM builds are skipped.
+        # Dell names it differently per model catalog. The old exact match ('Dell Command | Update')
+        # found nothing for the Dell Pro 16 Plus (SKU 0CDD, MRQ3049-LT601, 2026-11-16), whose catalog
+        # says 'Dell Command | Update for Win32', '... Update Application' and '... Update Windows
+        # Universal Application'. All four are accepted; the old 4.x 'Application for Windows 10' is not.
+        $dcuName = '^Dell Command \| Update( for Win32| Application| Windows Universal Application)?$'
         $pick = @($cat.Manifest.SoftwareComponent) |
-                Where-Object { $_.Name.Display.InnerText.Trim() -eq 'Dell Command | Update' -and $_.ComponentType.value -eq 'APAC' -and $_.path -notmatch 'ARM' } |
+                Where-Object { $_.Name.Display.InnerText.Trim() -match $dcuName -and $_.ComponentType.value -eq 'APAC' -and $_.path -notmatch 'ARM' } |
                 Sort-Object @{ Expression = { [version]$_.vendorVersion } }, @{ Expression = { $_.path -notmatch 'Universal' } } -Descending |
                 Select-Object -First 1
         if (-not $pick) { Write-Warning "  Dell catalog: no Dell Command Update listed for this model."; return $null }
